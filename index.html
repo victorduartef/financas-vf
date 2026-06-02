@@ -204,10 +204,10 @@
         </select>
         <select id="fatura-cartao-sel"><option value="visa">Visa Infinite</option><option value="gold">Cartão Gold</option></select>
       </div>
-      <div class="upload-area" onclick="document.getElementById('pdf-upload').click()">
-        <i class="ti ti-file-upload"></i><p>Enviar fatura PDF</p><p class="hint">Clique para selecionar</p>
-      </div>
-      <input type="file" id="pdf-upload" accept=".pdf" onchange="handlePdfUpload(event)">
+      <label for="pdf-upload" class="upload-area" style="display:block;cursor:pointer;">
+        <i class="ti ti-file-upload"></i><p>Enviar fatura PDF</p><p class="hint" id="upload-hint">Toque para selecionar</p>
+      </label>
+      <input type="file" id="pdf-upload" accept=".pdf,application/pdf" capture style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;" onchange="handlePdfUpload(event)">
       <div id="fatura-content"></div>
     </div>
     <div id="tab-cats" class="tab">
@@ -488,7 +488,9 @@ async function extractPdfText(file){
 }
 
 async function handlePdfUpload(event){
-  const file=event.target.files[0];if(!file)return;
+  const file=event.target.files[0];
+  if(!file){console.log('No file selected');return;}
+  document.getElementById('upload-hint').textContent='📄 '+file.name;
   const mesRef=document.getElementById('fatura-mes-ref').value;
   const cartao=document.getElementById('fatura-cartao-sel').value;
   if(!mesRef){alert('Selecione o mês de pagamento antes de enviar a fatura.');return;}
