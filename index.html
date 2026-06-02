@@ -475,38 +475,180 @@ function deleteBill(){if(!editingBillId)return;bills=bills.filter(b=>b.id!==edit
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(m=>{m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});});
 
-async function extractPdfText(file){
-  const arrayBuffer=await file.arrayBuffer();
-  const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
-  let fullText='';
-  for(let i=1;i<=pdf.numPages;i++){
-    const page=await pdf.getPage(i);
-    const content=await page.getTextContent();
-    fullText+=content.items.map(item=>item.str).join(' ')+'\n';
+// Categorização por palavras-chave
+const KEYWORD_CATS = {
+  'Transporte':['uber','99','taxi','posto','combustivel','estacionamento','pedagio','ifood*moto','loggi'],
+  'Alimentação':['restaurante','lanche','pizza','burger','sushi','padaria','pao de','supermercado','mercado','wellness','hortifruti','ifood','rappi','delivery','varanda','spicy','queijaria','panini','bh shopping','bhshopping','shopping','folhas'],
+  'Saúde':['farmacia','drogaria','medico','clinica','hospital','laboratorio','radiologia','odonto','sorrisoodonto','plano','seguro','azos','tokio','lima radio','atletico','academia','ginastica','personal','pilates'],
+  'Assinaturas':['netflix','spotify','amazon prime','youtube','google','apple','microsoft','claude','chatgp','subscription','bill','lifebox','adaptaorg'],
+  'Educação':['pucrs','faculdade','curso','escola','leroy','livro','livraria','leitura','revistaria','magazine','fnac','cultura'],
+  'Compras':['mercadolivre','mercado livre','shopee','americanas','magazine','casas bahia','marisa','renner','cea','zara','amazon','greycom','boxdaleitura','sitelojas','b-house'],
+  'Pet':['cobasi','petshop','pet','veterinario','petz'],
+  'Lazer':['cinema','teatro','show','ingresso','vasco','atletico','cruzeiro','america','flamengo','corinthians','palmeiras','sport','clube','vascogi'],
+  'Telefonia':['tim','vivo','claro','oi','nextel','telecom'],
+  'Serviços':['jim.com','asaas','lantana','pagamento','mercado pago','sorrisoodonto','mp *']
+};
+
+function categorizarItem(nome){
+  const n = nome.toLowerCase();
+  for(const [cat, keys] of Object.entries(KEYWORD_CATS)){
+    if(keys.some(k => n.includes(k))) return cat;
   }
-  return fullText;
+  return 'Outros';
+}
+
+async function parseFaturaBradesco(file){
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+
+  // Extrai itens com posição X,Y para reconstruir linhas corretamente
+  let allItems = [];
+  for(let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const vp = page.getViewport({scale:1});
+    tc.items.forEach(item => {
+      allItems.push({
+        str: item.str.trim(),
+        x: Math.round(item.transform[4]),
+        y: Math.round(vp.height - item.transform[5]),
+        page: p
+      });
+    });
+  }
+
+  // Agrupa por linha (mesmo Y ± 4px, mesma página)
+  allItems.sort((a,b) => a.page - b.page || a.y - b.y || a.x - b.x);
+  const lines = [];
+  let curLine = null;
+  for(const item of allItems){
+    if(!item.str) continue;
+    if(!curLine || item.page !== curLine.page || Math.abs(item.y - curLine.y) > 5){
+      curLine = {page: item.page, y: item.y, parts: [item.str]};
+      lines.push(curLine);
+    } else {
+      curLine.parts.push(item.str);
+    }
+  }
+
+  const lancamentos = [];
+  // Padrão: linha começa com DD/MM
+  const reData = /^(\d{2}\/\d{2})$/;
+  const reValor = /^(\d{1,3}(?:\.\d{3})*,\d{2})$/;
+  const reParcela = /(\d{2})\/( \d{2}|\d{2})$/; // XX/XX no final do nome
+
+  for(let i = 0; i < lines.length; i++){
+    const parts = lines[i].parts;
+    if(parts.length === 0) continue;
+    const first = parts[0];
+    if(!reData.test(first)) continue;
+
+    const data = first;
+    // Junta todas as partes da linha exceto data e possível valor final
+    let nameParts = [];
+    let valor = null;
+
+    for(let j = 1; j < parts.length; j++){
+      const p = parts[j];
+      if(reValor.test(p.replace('-',''))){
+        valor = parseFloat(p.replace(/\./g,'').replace(',','.'));
+      } else if(['SAO PAULO','BELO HORIZONT','BELO HORIZONTE','RIO DE JANEIR','CAMPINAS','OSASCO','RECIFE','CAJAMAR','Sao Paulo','Belo Horizont','Nova Lima','NOVA LIMA','SAO LOURENCO','ANTHROPIC.C','OM','Osasco'].includes(p)){
+        // cidade, ignora
+      } else {
+        nameParts.push(p);
+      }
+    }
+
+    // Se valor não encontrado na mesma linha, tenta próxima linha com só número
+    if(valor === null && i+1 < lines.length){
+      const nextParts = lines[i+1].parts;
+      const maybeVal = nextParts.join(' ').trim();
+      if(reValor.test(maybeVal)){
+        valor = parseFloat(maybeVal.replace(/\./g,'').replace(',','.'));
+        i++; // pula linha de valor
+      }
+    }
+
+    if(valor === null || valor <= 0) continue;
+
+    let nome = nameParts.join(' ').trim();
+    if(!nome) continue;
+
+    // Ignora linhas de controle
+    const nomeUpper = nome.toUpperCase();
+    if(['PAG BOLETO BANCARIO','IOF S/ TRANS INTER REAIS','SALDO ANTERIOR','PAGAMENTO'].some(x => nomeUpper.includes(x))) continue;
+    if(nomeUpper === 'PAGAMENTO') continue;
+
+    // Detecta parcela: padrão XX/XX no nome
+    const mParcela = nome.match(/(\d{2})\/(\d{2})(?:\s|$)/);
+    let parcela_atual = null, total_parcelas = null;
+    let nomeClean = nome;
+    if(mParcela){
+      parcela_atual = parseInt(mParcela[1]);
+      total_parcelas = parseInt(mParcela[2]);
+      nomeClean = nome.replace(mParcela[0], '').trim();
+    }
+
+    lancamentos.push({ data, nome: nomeClean, valor, parcela_atual, total_parcelas });
+  }
+
+  // Separa parcelas e itens normais
+  const parcelas = lancamentos
+    .filter(l => l.parcela_atual !== null)
+    .map(l => ({
+      nome: l.nome,
+      parcela_atual: l.parcela_atual,
+      total_parcelas: l.total_parcelas,
+      valor: l.valor,
+      data: l.data,
+      ultima: l.parcela_atual === l.total_parcelas
+    }));
+
+  const normais = lancamentos.filter(l => l.parcela_atual === null);
+
+  // Agrupa normais por categoria
+  const catMap = {};
+  normais.forEach(l => {
+    const cat = categorizarItem(l.nome);
+    if(!catMap[cat]) catMap[cat] = {categoria: cat, total: 0, itens: []};
+    catMap[cat].total += l.valor;
+    catMap[cat].itens.push({nome: l.nome, valor: l.valor, data: l.data});
+  });
+  const categorias = Object.values(catMap).sort((a,b) => b.total - a.total);
+  categorias.forEach(c => { c.total = Math.round(c.total * 100) / 100; });
+
+  const total = lancamentos.reduce((s, l) => s + l.valor, 0);
+
+  return { total: Math.round(total * 100) / 100, parcelas, categorias };
 }
 
 async function handlePdfUpload(event){
-  const file=event.target.files[0];
-  if(!file){console.log('No file selected');return;}
-  document.getElementById('upload-hint').textContent='📄 '+file.name;
-  const mesRef=document.getElementById('fatura-mes-ref').value;
-  const cartao=document.getElementById('fatura-cartao-sel').value;
-  if(!mesRef){alert('Selecione o mês de pagamento antes de enviar a fatura.');return;}
-  document.getElementById('loading-text').textContent='Lendo PDF...';
+  const file = event.target.files[0];
+  if(!file){ console.log('No file selected'); return; }
+  document.getElementById('upload-hint').textContent = '📄 ' + file.name;
+  const mesRef = document.getElementById('fatura-mes-ref').value;
+  const cartao = document.getElementById('fatura-cartao-sel').value;
+  if(!mesRef){ alert('Selecione o mês de pagamento antes de enviar a fatura.'); return; }
+  document.getElementById('loading-text').textContent = 'Lendo PDF...';
   document.getElementById('loading').classList.add('open');
   try{
-    const pdfText=await extractPdfText(file);
-    document.getElementById('loading-text').textContent='Analisando com IA...';
-    const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:[{type:'text',text:`Analise este extrato de fatura de cartão de crédito e retorne APENAS JSON válido sem markdown:\n{"total":número,"parcelas":[{"nome":string,"parcela_atual":número,"total_parcelas":número,"valor":número,"data":string,"ultima":boolean}],"categorias":[{"categoria":string,"total":número,"itens":[{"nome":string,"valor":número,"data":string}]}]}\nultima=true se parcela_atual===total_parcelas. Identifique parcelas pelo padrão "X/Y" no nome. Categorize demais itens por nome do estabelecimento (Transporte,Alimentação,Saúde,Assinaturas,Compras,Moradia,Educação,Pet,Outros). Ignore pagamentos,saldo anterior,IOF.\n\nTEXTO DA FATURA:\n${pdfText.substring(0,8000)}`}]}]})});
-    const result=await response.json();let text=(result.content||[]).map(x=>x.text||'').join('');text=text.replace(/```json|```/g,'').trim();
-    const parsed=JSON.parse(text);const md=getMonthData();if(!md.faturas)md.faturas={};
-    md.faturas[cartao+'_'+mesRef]={...parsed,cartao,mesRef,uploadedAt:new Date().toISOString()};
-    const billEntry=bills.find(b=>b.id===cartao);if(billEntry&&parsed.total)billEntry.value=parsed.total;
-    saveState();document.getElementById('loading').classList.remove('open');renderFaturaContent(cartao,mesRef);renderBills();renderSummary();renderFaturaPills();
-  }catch(e){document.getElementById('loading').classList.remove('open');alert('Erro ao processar fatura.\n'+e.message);}
-  event.target.value='';
+    const parsed = await parseFaturaBradesco(file);
+    const md = getMonthData();
+    if(!md.faturas) md.faturas = {};
+    md.faturas[cartao+'_'+mesRef] = {...parsed, cartao, mesRef, uploadedAt: new Date().toISOString()};
+    const billEntry = bills.find(b => b.id === cartao);
+    if(billEntry && parsed.total) billEntry.value = parsed.total;
+    saveState();
+    document.getElementById('loading').classList.remove('open');
+    renderFaturaContent(cartao, mesRef);
+    renderBills();
+    renderSummary();
+    renderFaturaPills();
+  } catch(e){
+    document.getElementById('loading').classList.remove('open');
+    alert('Erro ao processar fatura.\n' + e.message);
+  }
+  event.target.value = '';
 }
 function renderFaturaPills(){const el=document.getElementById('fatura-pills');const md=getMonthData();const keys=Object.keys(md.faturas||{});if(!keys.length){el.innerHTML='';return;}el.innerHTML=keys.map(k=>{const f=md.faturas[k];const label=(f.cartao==='visa'?'Visa Infinite':'Gold')+' '+f.mesRef;return `<div class="tab-pill" onclick="selectFaturaPill(this,'${f.cartao}','${f.mesRef}')">${label}</div>`;}).join('');const first=el.querySelector('.tab-pill');if(first){const f=md.faturas[keys[0]];first.classList.add('active');renderFaturaContent(f.cartao,f.mesRef);}}
 function selectFaturaPill(el,cartao,mesRef){document.querySelectorAll('#fatura-pills .tab-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');renderFaturaContent(cartao,mesRef);}
