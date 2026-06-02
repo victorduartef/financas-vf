@@ -307,6 +307,8 @@
   if (window._onFirebaseReady) window._onFirebaseReady();
 </script>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const MONTHS=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -473,6 +475,18 @@ function deleteBill(){if(!editingBillId)return;bills=bills.filter(b=>b.id!==edit
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(m=>{m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});});
 
+async function extractPdfText(file){
+  const arrayBuffer=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+  let fullText='';
+  for(let i=1;i<=pdf.numPages;i++){
+    const page=await pdf.getPage(i);
+    const content=await page.getTextContent();
+    fullText+=content.items.map(item=>item.str).join(' ')+'\n';
+  }
+  return fullText;
+}
+
 async function handlePdfUpload(event){
   const file=event.target.files[0];if(!file)return;
   const mesRef=document.getElementById('fatura-mes-ref').value;
@@ -481,9 +495,9 @@ async function handlePdfUpload(event){
   document.getElementById('loading-text').textContent='Lendo PDF...';
   document.getElementById('loading').classList.add('open');
   try{
-    const arrayBuffer=await file.arrayBuffer();const uint8=new Uint8Array(arrayBuffer);const base64=btoa(String.fromCharCode(...uint8));
+    const pdfText=await extractPdfText(file);
     document.getElementById('loading-text').textContent='Analisando com IA...';
-    const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},{type:'text',text:`Analise esta fatura e retorne APENAS JSON válido sem markdown:\n{"total":número,"parcelas":[{"nome":string,"parcela_atual":número,"total_parcelas":número,"valor":número,"data":string,"ultima":boolean}],"categorias":[{"categoria":string,"total":número,"itens":[{"nome":string,"valor":número,"data":string}]}]}\nultima=true se parcela_atual===total_parcelas. Categorize sem parcela por nome (Transporte,Alimentação,Saúde,Assinaturas,Compras,Moradia,Educação,Pet,Outros). Ignore pagamentos,saldo anterior,IOF.`}]}]})});
+    const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:[{type:'text',text:`Analise este extrato de fatura de cartão de crédito e retorne APENAS JSON válido sem markdown:\n{"total":número,"parcelas":[{"nome":string,"parcela_atual":número,"total_parcelas":número,"valor":número,"data":string,"ultima":boolean}],"categorias":[{"categoria":string,"total":número,"itens":[{"nome":string,"valor":número,"data":string}]}]}\nultima=true se parcela_atual===total_parcelas. Identifique parcelas pelo padrão "X/Y" no nome. Categorize demais itens por nome do estabelecimento (Transporte,Alimentação,Saúde,Assinaturas,Compras,Moradia,Educação,Pet,Outros). Ignore pagamentos,saldo anterior,IOF.\n\nTEXTO DA FATURA:\n${pdfText.substring(0,8000)}`}]}]})});
     const result=await response.json();let text=(result.content||[]).map(x=>x.text||'').join('');text=text.replace(/```json|```/g,'').trim();
     const parsed=JSON.parse(text);const md=getMonthData();if(!md.faturas)md.faturas={};
     md.faturas[cartao+'_'+mesRef]={...parsed,cartao,mesRef,uploadedAt:new Date().toISOString()};
