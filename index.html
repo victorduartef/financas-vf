@@ -207,7 +207,7 @@
       <label for="pdf-upload" class="upload-area" style="display:block;cursor:pointer;">
         <i class="ti ti-file-upload"></i><p>Enviar fatura PDF</p><p class="hint" id="upload-hint">Toque para selecionar</p>
       </label>
-      <input type="file" id="pdf-upload" accept=".pdf,application/pdf" capture style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;" onchange="handlePdfUpload(event)">
+      <input type="file" id="pdf-upload" accept=".pdf,application/pdf" style="display:none;">
       <div id="fatura-content"></div>
     </div>
     <div id="tab-cats" class="tab">
@@ -521,6 +521,13 @@ function renderFaturaContent(cartao,mesRef){
 
 // Inicialização
 loadState();ensureMonthData();render();
+
+// File input listener robusto para mobile
+document.getElementById('pdf-upload').addEventListener('change', function(e){
+  if(e.target.files && e.target.files.length > 0){
+    handlePdfUpload(e);
+  }
+});
 window._onFirebaseReady=function(){initFirebaseSync();};
 if(window._firebaseReady)initFirebaseSync();
 </script>
