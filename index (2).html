@@ -7,16 +7,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    :root{
-      --bg:#f5f5f7;--bg2:#fff;--bg3:#f0f0f2;
-      --border:rgba(0,0,0,0.08);
-      --text:#111;--text2:#555;--text3:#999;
-      --green:#16a34a;--green-bg:#dcfce7;
-      --red:#dc2626;--red-bg:#fee2e2;
-      --amber:#d97706;--amber-bg:#fef3c7;
-      --accent:#4f46e5;--accent-bg:#ede9fe;--accent-text:#3730a3;
-      --radius:12px;--radius-sm:8px;
-    }
+    :root{--bg:#f5f5f7;--bg2:#fff;--bg3:#f0f0f2;--border:rgba(0,0,0,0.08);--text:#111;--text2:#555;--text3:#999;--green:#16a34a;--green-bg:#dcfce7;--red:#dc2626;--red-bg:#fee2e2;--amber:#d97706;--amber-bg:#fef3c7;--accent:#4f46e5;--accent-bg:#ede9fe;--accent-text:#3730a3;--radius:12px;--radius-sm:8px;}
     body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px;min-height:100vh}
     .app{display:flex;flex-direction:column;min-height:100vh;max-width:420px;margin:0 auto}
     .topbar{background:#4f46e5;padding:14px 16px 10px;position:sticky;top:0;z-index:100}
@@ -140,6 +131,9 @@
     .spinner{width:36px;height:36px;border:3px solid #e0e7ff;border-top-color:#4f46e5;border-radius:50%;animation:spin 0.8s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
     .loading-text{color:#555;font-size:13px;font-weight:500}
+    .sync-bar{background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;text-align:center;padding:4px;display:none}
+    .sync-bar.show{display:block}
+    .sync-bar.error{background:#fee2e2;color:#dc2626}
     .analise-card{background:#fff;border:1px solid var(--border);border-radius:12px;margin:0 16px 10px;overflow:hidden}
     .analise-card-hdr{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700;color:#111;display:flex;align-items:center;gap:6px}
     .analise-card-hdr i{color:#4f46e5;font-size:16px}
@@ -166,6 +160,7 @@
   </style>
 </head>
 <body>
+<div class="sync-bar" id="sync-bar"></div>
 <div class="app">
   <div class="topbar">
     <div class="topbar-title"><i class="ti ti-wallet" style="margin-right:6px;font-size:16px"></i>FinançasVF</div>
@@ -285,6 +280,33 @@
 </div>
 <div class="loading-overlay" id="loading"><div class="spinner"></div><div class="loading-text" id="loading-text">Analisando...</div></div>
 
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBnnXRjyyX-8qNonJIcRYERACQ2u_KH2n8",
+    authDomain: "financas-vf-994d5.firebaseapp.com",
+    databaseURL: "https://financas-vf-994d5-default-rtdb.firebaseio.com",
+    projectId: "financas-vf-994d5",
+    storageBucket: "financas-vf-994d5.firebasestorage.app",
+    messagingSenderId: "736225075429",
+    appId: "1:736225075429:web:526c8fe3264e333a1d340c"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  // Expoe funções Firebase globalmente
+  window._fbSet = (path, data) => set(ref(db, path), data);
+  window._fbListen = (path, cb) => onValue(ref(db, path), snap => cb(snap.val()));
+
+  // Inicia app após Firebase pronto
+  window._firebaseReady = true;
+  if (window._onFirebaseReady) window._onFirebaseReady();
+</script>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const MONTHS=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -305,9 +327,48 @@ const DEFAULT_BILLS=[
 let categories=Object.entries(CAT_COLORS).map(([name,color])=>({name,color}));
 let bills=JSON.parse(localStorage.getItem('vf_bills')||'null')||DEFAULT_BILLS.map(b=>({...b}));
 let editingBillId=null,pendingPayBillId=null,pendingUnpayBillId=null,donutChart=null;
+let fbSaveTimer=null;
 
-function saveState(){localStorage.setItem('vf_state',JSON.stringify(state));localStorage.setItem('vf_bills',JSON.stringify(bills));localStorage.setItem('vf_cats',JSON.stringify(categories));}
-function loadState(){const s=localStorage.getItem('vf_state');if(s)state=JSON.parse(s);const c=localStorage.getItem('vf_cats');if(c)categories=JSON.parse(c);const b=localStorage.getItem('vf_bills');if(b)bills=JSON.parse(b);}
+function showSync(msg,isError){
+  const bar=document.getElementById('sync-bar');
+  bar.textContent=msg;bar.className='sync-bar show'+(isError?' error':'');
+  clearTimeout(window._syncTimer);
+  window._syncTimer=setTimeout(()=>bar.classList.remove('show'),2500);
+}
+
+function saveState(){
+  // Salva local
+  localStorage.setItem('vf_state',JSON.stringify(state));
+  localStorage.setItem('vf_bills',JSON.stringify(bills));
+  localStorage.setItem('vf_cats',JSON.stringify(categories));
+  // Salva no Firebase com debounce
+  clearTimeout(fbSaveTimer);
+  fbSaveTimer=setTimeout(()=>{
+    if(!window._fbSet){return;}
+    const payload={state,bills,categories};
+    window._fbSet('victorduartef/financas',payload)
+      .then(()=>showSync('✓ Sincronizado'))
+      .catch(()=>showSync('Erro ao sincronizar',true));
+  },800);
+}
+
+function loadState(){
+  const s=localStorage.getItem('vf_state');if(s)state=JSON.parse(s);
+  const c=localStorage.getItem('vf_cats');if(c)categories=JSON.parse(c);
+  const b=localStorage.getItem('vf_bills');if(b)bills=JSON.parse(b);
+}
+
+function initFirebaseSync(){
+  if(!window._fbListen)return;
+  window._fbListen('victorduartef/financas',(data)=>{
+    if(!data)return;
+    if(data.state){state=data.state;localStorage.setItem('vf_state',JSON.stringify(state));}
+    if(data.bills){bills=data.bills;localStorage.setItem('vf_bills',JSON.stringify(bills));}
+    if(data.categories){categories=data.categories;localStorage.setItem('vf_cats',JSON.stringify(categories));}
+    ensureMonthData();render();
+  });
+}
+
 function fmtBRL(v){return 'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function getCurrentKey(){return `${state.currentYear}-${String(state.currentMonth+1).padStart(2,'0')}`;}
 function getMonthData(){const k=getCurrentKey();if(!state.data[k])state.data[k]={salario:0,extras:[],bills:[],avulsos:[],faturas:{}};return state.data[k];}
@@ -341,9 +402,7 @@ function renderSummary(){
   const receita=salario+extras;
   const fixos=bills.reduce((a,b)=>{const e=getBillEntry(b.id);return a+(e.paid?(e.paidValue||0):parseFloat(b.value||0));},0);
   const avulsos=(md.avulsos||[]).reduce((a,x)=>a+parseFloat(x.value||0),0);
-  const gastos=fixos+avulsos;
-  const saldo=receita-gastos;
-  const pct=receita>0?Math.round((gastos/receita)*100):0;
+  const gastos=fixos+avulsos;const saldo=receita-gastos;const pct=receita>0?Math.round((gastos/receita)*100):0;
   document.getElementById('m-receita').textContent=fmtBRL(receita);
   document.getElementById('m-receita-sub').textContent='Salário + '+(md.extras||[]).length+' extra(s)';
   document.getElementById('m-gastos').textContent=fmtBRL(gastos);
@@ -360,21 +419,17 @@ function renderBills(){
   const el=document.getElementById('bills-list');
   if(!bills.length){el.innerHTML='<div class="empty"><i class="ti ti-inbox"></i><p>Nenhuma conta</p></div>';return;}
   el.innerHTML=bills.map(b=>{
-    const e=getBillEntry(b.id);
-    const cat=categories.find(c=>c.name===b.cat)||{color:'#64748b'};
+    const e=getBillEntry(b.id);const cat=categories.find(c=>c.name===b.cat)||{color:'#64748b'};
     const displayVal=e.paid&&e.paidValue!==null?e.paidValue:b.value;
     return `<div class="bill-item">
       <div class="bill-icon" style="background:${cat.color}18;color:${cat.color}"><i class="ti ${b.icon}"></i></div>
       <div class="bill-info" onclick="openEditBill('${b.id}')">
-        <div class="bill-name">${b.name}</div>
-        <div class="bill-cat">${b.cat}</div>
+        <div class="bill-name">${b.name}</div><div class="bill-cat">${b.cat}</div>
         ${e.paid&&e.paidValue!==null&&e.paidValue!==b.value?`<div class="bill-paid-note">Pago: ${fmtBRL(e.paidValue)} (padrão ${fmtBRL(b.value)})</div>`:''}
       </div>
       <div class="bill-right">
         <div class="bill-value">${displayVal>0?fmtBRL(displayVal):'—'}</div>
-        <button style="${e.paid?BTN_PAID:BTN_UNPAID}" onclick="clickCheck('${b.id}')" title="${e.paid?'Pago — clique para desmarcar':'Pendente — clique para marcar como pago'}">
-          <i class="ti ti-check"></i>
-        </button>
+        <button style="${e.paid?BTN_PAID:BTN_UNPAID}" onclick="clickCheck('${b.id}')"><i class="ti ti-check"></i></button>
       </div>
     </div>`;
   }).join('');
@@ -388,23 +443,14 @@ function renderAnalise(){
   Object.values(md.faturas||{}).forEach(f=>{(f.categorias||[]).forEach(cat=>{catMap[cat.categoria]=(catMap[cat.categoria]||0)+cat.total;});});
   const catEntries=Object.entries(catMap).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
   const totalGastos=catEntries.reduce((a,[,v])=>a+v,0);
-  const ultimasParcelas=[];
-  Object.values(md.faturas||{}).forEach(f=>{(f.parcelas||[]).filter(p=>p.ultima).forEach(p=>ultimasParcelas.push(p));});
+  const ultimasParcelas=[];Object.values(md.faturas||{}).forEach(f=>{(f.parcelas||[]).filter(p=>p.ultima).forEach(p=>ultimasParcelas.push(p));});
   const totalAlivio=ultimasParcelas.reduce((a,p)=>a+(p.valor||0),0);
-  const parcelasAtivas=[];
-  Object.values(md.faturas||{}).forEach(f=>{(f.parcelas||[]).filter(p=>!p.ultima).forEach(p=>parcelasAtivas.push(p));});
+  const parcelasAtivas=[];Object.values(md.faturas||{}).forEach(f=>{(f.parcelas||[]).filter(p=>!p.ultima).forEach(p=>parcelasAtivas.push(p));});
   const chartColors=catEntries.map(([cat])=>{const c=categories.find(x=>x.name===cat);return c?c.color:(CAT_COLORS[cat]||'#64748b');});
   let html='';
-  if(catEntries.length){
-    html+=`<div class="analise-card"><div class="analise-card-hdr"><i class="ti ti-chart-pie"></i> Gastos por categoria</div>
-      <div class="donut-wrap"><div class="chart-container"><canvas id="donut-chart" role="img" aria-label="Gastos por categoria"></canvas></div>
-      <div class="donut-legend">${catEntries.slice(0,6).map(([cat,val],i)=>`<div class="donut-legend-item"><div class="donut-legend-dot" style="background:${chartColors[i]}"></div><span class="donut-legend-name">${cat}</span><span class="donut-legend-val">${Math.round(val/totalGastos*100)}%</span></div>`).join('')}</div></div>
-      ${catEntries.map(([cat,val],i)=>`<div class="cat-bar-row"><span class="cat-bar-label">${cat}</span><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${Math.round(val/totalGastos*100)}%;background:${chartColors[i]}"></div></div><span class="cat-bar-val">${fmtBRL(val)}</span></div>`).join('')}
-    </div>`;
-  } else {
-    html+=`<div class="analise-card"><div class="empty"><i class="ti ti-chart-pie"></i><p>Lance contas ou faturas para ver a análise</p></div></div>`;
-  }
-  html+=`<div class="analise-card"><div class="analise-card-hdr"><i class="ti ti-circle-check"></i> Parcelas encerrando ${ultimasParcelas.length?`<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:99px;margin-left:auto;font-weight:700">${ultimasParcelas.length}</span>`:''}</div>${ultimasParcelas.length?ultimasParcelas.map(p=>`<div class="parcela-row"><div style="flex:1"><div class="parcela-nome">${p.nome}</div><div class="parcela-info">Última (${p.parcela_atual}/${p.total_parcelas})</div></div><span class="badge badge-last" style="margin-right:8px">última</span><span class="parcela-val">${fmtBRL(p.valor)}</span></div>`).join('')+`<div class="alivio-total"><span>Alívio no próximo mês</span><span>-${fmtBRL(totalAlivio)}</span></div>`:`<div class="empty" style="padding:20px"><p>Nenhuma parcela encerrando</p></div>`}</div>`;
+  if(catEntries.length){html+=`<div class="analise-card"><div class="analise-card-hdr"><i class="ti ti-chart-pie"></i> Gastos por categoria</div><div class="donut-wrap"><div class="chart-container"><canvas id="donut-chart" role="img" aria-label="Gastos por categoria"></canvas></div><div class="donut-legend">${catEntries.slice(0,6).map(([cat,val],i)=>`<div class="donut-legend-item"><div class="donut-legend-dot" style="background:${chartColors[i]}"></div><span class="donut-legend-name">${cat}</span><span class="donut-legend-val">${Math.round(val/totalGastos*100)}%</span></div>`).join('')}</div></div>${catEntries.map(([cat,val],i)=>`<div class="cat-bar-row"><span class="cat-bar-label">${cat}</span><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${Math.round(val/totalGastos*100)}%;background:${chartColors[i]}"></div></div><span class="cat-bar-val">${fmtBRL(val)}</span></div>`).join('')}</div>`;}
+  else{html+=`<div class="analise-card"><div class="empty"><i class="ti ti-chart-pie"></i><p>Lance contas ou faturas para ver a análise</p></div></div>`;}
+  html+=`<div class="analise-card"><div class="analise-card-hdr"><i class="ti ti-circle-check"></i> Parcelas encerrando ${ultimasParcelas.length?`<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:99px;margin-left:auto;font-weight:700">${ultimasParcelas.length}</span>`:''}</div>${ultimasParcelas.length?ultimasParcelas.map(p=>`<div class="parcela-row"><div style="flex:1"><div class="parcela-nome">${p.nome}</div><div class="parcela-info">Última (${p.parcela_atual}/${p.total_parcelas})</div></div><span class="badge badge-last" style="margin-right:8px">última</span><span class="parcela-val">${fmtBRL(p.valor)}</span></div>`).join('')+`<div class="alivio-total"><span>Alívio próximo mês</span><span>-${fmtBRL(totalAlivio)}</span></div>`:`<div class="empty" style="padding:20px"><p>Nenhuma parcela encerrando</p></div>`}</div>`;
   if(parcelasAtivas.length){html+=`<div class="analise-card"><div class="analise-card-hdr"><i class="ti ti-layers-intersect"></i> Em andamento <span style="background:#ede9fe;color:#3730a3;font-size:11px;padding:2px 8px;border-radius:99px;margin-left:auto;font-weight:700">${parcelasAtivas.length}</span></div>${parcelasAtivas.map(p=>`<div class="parcela-row"><div style="flex:1"><div class="parcela-nome">${p.nome}</div><div class="parcela-info">Parcela ${p.parcela_atual}/${p.total_parcelas} · faltam ${p.total_parcelas-p.parcela_atual}</div></div><span class="parcela-val">${fmtBRL(p.valor)}</span></div>`).join('')}</div>`;}
   el.innerHTML=html;
   if(catEntries.length){setTimeout(()=>{const canvas=document.getElementById('donut-chart');if(!canvas)return;if(donutChart){donutChart.destroy();donutChart=null;}donutChart=new Chart(canvas,{type:'doughnut',data:{labels:catEntries.map(([k])=>k),datasets:[{data:catEntries.map(([,v])=>v),backgroundColor:chartColors,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:(ctx)=>ctx.label+': '+fmtBRL(ctx.raw)}}},cutout:'65%'}});},150);}
@@ -435,36 +481,15 @@ async function handlePdfUpload(event){
   document.getElementById('loading-text').textContent='Lendo PDF...';
   document.getElementById('loading').classList.add('open');
   try{
-    const arrayBuffer=await file.arrayBuffer();
-    const uint8=new Uint8Array(arrayBuffer);
-    const base64=btoa(String.fromCharCode(...uint8));
+    const arrayBuffer=await file.arrayBuffer();const uint8=new Uint8Array(arrayBuffer);const base64=btoa(String.fromCharCode(...uint8));
     document.getElementById('loading-text').textContent='Analisando com IA...';
-    const response=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1000,
-        messages:[{role:'user',content:[
-          {type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},
-          {type:'text',text:`Analise esta fatura e retorne APENAS JSON válido sem markdown:\n{"total":número,"parcelas":[{"nome":string,"parcela_atual":número,"total_parcelas":número,"valor":número,"data":string,"ultima":boolean}],"categorias":[{"categoria":string,"total":número,"itens":[{"nome":string,"valor":número,"data":string}]}]}\nultima=true se parcela_atual===total_parcelas. Categorize sem parcela por nome (Transporte,Alimentação,Saúde,Assinaturas,Compras,Moradia,Educação,Pet,Outros). Ignore pagamentos,saldo anterior,IOF.`}
-        ]}]
-      })
-    });
-    const result=await response.json();
-    let text=(result.content||[]).map(x=>x.text||'').join('');
-    text=text.replace(/```json|```/g,'').trim();
-    const parsed=JSON.parse(text);
-    const md=getMonthData();if(!md.faturas)md.faturas={};
+    const response=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},{type:'text',text:`Analise esta fatura e retorne APENAS JSON válido sem markdown:\n{"total":número,"parcelas":[{"nome":string,"parcela_atual":número,"total_parcelas":número,"valor":número,"data":string,"ultima":boolean}],"categorias":[{"categoria":string,"total":número,"itens":[{"nome":string,"valor":número,"data":string}]}]}\nultima=true se parcela_atual===total_parcelas. Categorize sem parcela por nome (Transporte,Alimentação,Saúde,Assinaturas,Compras,Moradia,Educação,Pet,Outros). Ignore pagamentos,saldo anterior,IOF.`}]}]})});
+    const result=await response.json();let text=(result.content||[]).map(x=>x.text||'').join('');text=text.replace(/```json|```/g,'').trim();
+    const parsed=JSON.parse(text);const md=getMonthData();if(!md.faturas)md.faturas={};
     md.faturas[cartao+'_'+mesRef]={...parsed,cartao,mesRef,uploadedAt:new Date().toISOString()};
     const billEntry=bills.find(b=>b.id===cartao);if(billEntry&&parsed.total)billEntry.value=parsed.total;
-    saveState();
-    document.getElementById('loading').classList.remove('open');
-    renderFaturaContent(cartao,mesRef);renderBills();renderSummary();renderFaturaPills();
-  }catch(e){
-    document.getElementById('loading').classList.remove('open');
-    alert('Erro ao processar fatura.\n'+e.message);
-  }
+    saveState();document.getElementById('loading').classList.remove('open');renderFaturaContent(cartao,mesRef);renderBills();renderSummary();renderFaturaPills();
+  }catch(e){document.getElementById('loading').classList.remove('open');alert('Erro ao processar fatura.\n'+e.message);}
   event.target.value='';
 }
 function renderFaturaPills(){const el=document.getElementById('fatura-pills');const md=getMonthData();const keys=Object.keys(md.faturas||{});if(!keys.length){el.innerHTML='';return;}el.innerHTML=keys.map(k=>{const f=md.faturas[k];const label=(f.cartao==='visa'?'Visa Infinite':'Gold')+' '+f.mesRef;return `<div class="tab-pill" onclick="selectFaturaPill(this,'${f.cartao}','${f.mesRef}')">${label}</div>`;}).join('');const first=el.querySelector('.tab-pill');if(first){const f=md.faturas[keys[0]];first.classList.add('active');renderFaturaContent(f.cartao,f.mesRef);}}
@@ -478,7 +503,10 @@ function renderFaturaContent(cartao,mesRef){
   el.innerHTML=html;
 }
 
+// Inicialização
 loadState();ensureMonthData();render();
+window._onFirebaseReady=function(){initFirebaseSync();};
+if(window._firebaseReady)initFirebaseSync();
 </script>
 </body>
 </html>
