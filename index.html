@@ -262,7 +262,39 @@
     <div class="form-row"><label class="form-label">Categoria</label><select class="form-input" id="bill-cat-inp"></select></div>
     <div class="form-row"><label class="form-label">Ícone</label>
       <select class="form-input" id="bill-icon-inp">
-        <option value="ti-building">Moradia</option><option value="ti-car">Transporte</option><option value="ti-credit-card">Cartão</option><option value="ti-device-mobile">Telefone</option><option value="ti-heart">Saúde</option><option value="ti-bolt">Energia</option><option value="ti-school">Educação</option><option value="ti-dog">Pet</option><option value="ti-device-tv">Streaming</option><option value="ti-tools">Outros</option>
+        <option value="ti-building">🏢 Moradia / Aluguel</option>
+        <option value="ti-home">🏠 Casa</option>
+        <option value="ti-car">🚗 Carro / Transporte</option>
+        <option value="ti-gas-station">⛽ Combustível</option>
+        <option value="ti-credit-card">💳 Cartão de Crédito</option>
+        <option value="ti-wallet">💰 Carteira / Finanças</option>
+        <option value="ti-device-mobile">📱 Telefone / Celular</option>
+        <option value="ti-heart">❤️ Saúde</option>
+        <option value="ti-pill">💊 Medicamentos</option>
+        <option value="ti-stethoscope">🩺 Médico / Plano</option>
+        <option value="ti-bolt">⚡ Energia Elétrica</option>
+        <option value="ti-droplet">💧 Água / Gás</option>
+        <option value="ti-wifi">📶 Internet</option>
+        <option value="ti-school">📚 Educação / Curso</option>
+        <option value="ti-book">📖 Livros / Leitura</option>
+        <option value="ti-dog">🐾 Pet / Animal</option>
+        <option value="ti-device-tv">📺 Streaming / TV</option>
+        <option value="ti-music">🎵 Música</option>
+        <option value="ti-shopping-cart">🛒 Supermercado</option>
+        <option value="ti-shirt">👕 Roupas / Moda</option>
+        <option value="ti-tools">🔧 Manutenção</option>
+        <option value="ti-hammer">🔨 Obra / Reforma</option>
+        <option value="ti-pig-money">🐷 Investimento / Poupança</option>
+        <option value="ti-chart-line">📈 Financiamento</option>
+        <option value="ti-receipt">🧾 Dívidas / Parcelas</option>
+        <option value="ti-plane">✈️ Viagem</option>
+        <option value="ti-beach">🏖️ Lazer / Férias</option>
+        <option value="ti-barbell">🏋️ Academia / Esporte</option>
+        <option value="ti-fork">🍽️ Alimentação / Restaurante</option>
+        <option value="ti-coffee">☕ Café / Padaria</option>
+        <option value="ti-gift">🎁 Presentes</option>
+        <option value="ti-brand-instagram">📸 Assinaturas Digitais</option>
+        <option value="ti-cash">💵 Outros Gastos</option>
       </select>
     </div>
     <div id="modal-bill-del-wrap" style="display:none;margin-top:4px"><button class="btn-danger-sm" style="width:100%" onclick="deleteBill()"><i class="ti ti-trash"></i> Excluir esta conta</button></div>
@@ -476,6 +508,7 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(m=>{m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});});
 
 // Categorização por palavras-chave
+// Categorização por palavras-chave (usada para parcelas e itens normais)
 const KEYWORD_CATS = {
   'Transporte':['uber','99','taxi','posto','combustivel','estacionamento','pedagio','ifood*moto','loggi'],
   'Alimentação':['restaurante','lanche','pizza','burger','sushi','padaria','pao de','supermercado','mercado','wellness','hortifruti','ifood','rappi','delivery','varanda','spicy','queijaria','panini','bh shopping','bhshopping','shopping','folhas'],
@@ -601,7 +634,8 @@ async function parseFaturaBradesco(file){
       total_parcelas: l.total_parcelas,
       valor: l.valor,
       data: l.data,
-      ultima: l.parcela_atual === l.total_parcelas
+      ultima: l.parcela_atual === l.total_parcelas,
+      categoria: categorizarItem(l.nome)
     }));
 
   const normais = lancamentos.filter(l => l.parcela_atual === null);
@@ -652,13 +686,88 @@ async function handlePdfUpload(event){
 }
 function renderFaturaPills(){const el=document.getElementById('fatura-pills');const md=getMonthData();const keys=Object.keys(md.faturas||{});if(!keys.length){el.innerHTML='';return;}el.innerHTML=keys.map(k=>{const f=md.faturas[k];const label=(f.cartao==='visa'?'Visa Infinite':'Gold')+' '+f.mesRef;return `<div class="tab-pill" onclick="selectFaturaPill(this,'${f.cartao}','${f.mesRef}')">${label}</div>`;}).join('');const first=el.querySelector('.tab-pill');if(first){const f=md.faturas[keys[0]];first.classList.add('active');renderFaturaContent(f.cartao,f.mesRef);}}
 function selectFaturaPill(el,cartao,mesRef){document.querySelectorAll('#fatura-pills .tab-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');renderFaturaContent(cartao,mesRef);}
+let _curFatCartao=null,_curFatMes=null;
 function renderFaturaContent(cartao,mesRef){
+  _curFatCartao=cartao;_curFatMes=mesRef;
   const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef];const el=document.getElementById('fatura-content');if(!f){el.innerHTML='';return;}
   const ultimas=(f.parcelas||[]).filter(p=>p.ultima);const totalAlivio=ultimas.reduce((a,p)=>a+(p.valor||0),0);
+  const catOptions=categories.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
   let html=`<div class="fatura-top-info"><div><div class="fatura-total-label">Total da fatura</div><div class="fatura-total-val">${fmtBRL(f.total)}</div></div>${totalAlivio>0?`<div style="text-align:right"><div class="fatura-total-label">Alívio próximo mês</div><div class="fatura-alerta-val">-${fmtBRL(totalAlivio)}</div></div>`:''}</div>`;
-  if(f.parcelas&&f.parcelas.length){html+=`<div class="fatura-result"><div class="fatura-card"><div class="fatura-card-hdr" onclick="this.nextElementSibling.classList.toggle('open')"><span style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;color:#4f46e5"><i class="ti ti-layers-intersect"></i> Parcelas (${f.parcelas.length})</span><i class="ti ti-chevron-down" style="color:#999"></i></div><div class="fatura-card-body open">${f.parcelas.map(p=>`<div class="fatura-row"><span class="fatura-row-name">${p.nome}</span><span class="fatura-row-date">${p.data||''}</span>${p.ultima?`<span class="badge badge-last">última</span>`:`<span class="badge badge-parcela">${p.parcela_atual}/${p.total_parcelas}</span>`}<span class="fatura-row-val">${fmtBRL(p.valor)}</span></div>`).join('')}</div></div></div>`;}
-  if(f.categorias&&f.categorias.length){html+=`<div class="fatura-result">`;f.categorias.forEach(cat=>{const catObj=categories.find(c=>c.name===cat.categoria)||{color:'#64748b'};html+=`<div class="fatura-card"><div class="fatura-card-hdr" onclick="this.nextElementSibling.classList.toggle('open')"><span style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;border-radius:50%;background:${catObj.color};display:inline-block;flex-shrink:0"></span>${cat.categoria}</span><span style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:800;color:#111">${fmtBRL(cat.total)}</span><i class="ti ti-chevron-down" style="color:#999"></i></span></div><div class="fatura-card-body">${cat.itens.map(item=>`<div class="fatura-row"><span class="fatura-row-name">${item.nome}</span><span class="fatura-row-date">${item.data||''}</span><span class="fatura-row-val">${fmtBRL(item.valor)}</span></div>`).join('')}</div></div>`;});html+=`</div>`;}
+
+  if(f.parcelas&&f.parcelas.length){
+    html+=`<div class="fatura-result"><div class="fatura-card">
+      <div class="fatura-card-hdr" onclick="this.nextElementSibling.classList.toggle('open')">
+        <span style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;color:#4f46e5"><i class="ti ti-layers-intersect"></i> Parcelas (${f.parcelas.length})</span>
+        <i class="ti ti-chevron-down" style="color:#999"></i>
+      </div>
+      <div class="fatura-card-body open">
+        ${f.parcelas.map((p,pi)=>{
+          const catObj=categories.find(c=>c.name===p.categoria)||{color:'#64748b'};
+          return `<div class="fatura-row" style="flex-wrap:wrap;gap:4px;">
+            <span class="fatura-row-name" style="min-width:120px">${p.nome}</span>
+            <span class="fatura-row-date">${p.data||''}</span>
+            ${p.ultima?`<span class="badge badge-last">última</span>`:`<span class="badge badge-parcela">${p.parcela_atual}/${p.total_parcelas}</span>`}
+            <select onchange="updateItemCat('parcela',${pi},this.value,'${cartao}','${mesRef}')" style="font-size:11px;padding:2px 4px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#111;max-width:100px;">
+              ${categories.map(c=>`<option value="${c.name}"${c.name===p.categoria?' selected':''}>${c.name}</option>`).join('')}
+            </select>
+            <span class="fatura-row-val">${fmtBRL(p.valor)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div></div>`;
+  }
+
+  if(f.categorias&&f.categorias.length){
+    html+=`<div class="fatura-result">`;
+    f.categorias.forEach((cat,ci)=>{
+      const catObj=categories.find(c=>c.name===cat.categoria)||{color:'#64748b'};
+      html+=`<div class="fatura-card">
+        <div class="fatura-card-hdr" onclick="this.nextElementSibling.classList.toggle('open')">
+          <span style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${catObj.color};display:inline-block;flex-shrink:0"></span>${cat.categoria}
+          </span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;font-weight:800;color:#111">${fmtBRL(cat.total)}</span>
+            <i class="ti ti-chevron-down" style="color:#999"></i>
+          </span>
+        </div>
+        <div class="fatura-card-body open">
+          ${cat.itens.map((item,ii)=>`
+            <div class="fatura-row" style="flex-wrap:wrap;gap:4px;">
+              <span class="fatura-row-name" style="min-width:120px">${item.nome}</span>
+              <span class="fatura-row-date">${item.data||''}</span>
+              <select onchange="updateItemCat('normal',${ci},this.value,'${cartao}','${mesRef}',${ii})" style="font-size:11px;padding:2px 4px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#111;max-width:100px;">
+                ${categories.map(c=>`<option value="${c.name}"${c.name===cat.categoria?' selected':''}>${c.name}</option>`).join('')}
+              </select>
+              <span class="fatura-row-val">${fmtBRL(item.valor)}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    });
+    html+=`</div>`;
+  }
   el.innerHTML=html;
+}
+
+function updateItemCat(type,idx,newCat,cartao,mesRef,itemIdx){
+  const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef];if(!f)return;
+  if(type==='parcela'){
+    f.parcelas[idx].categoria=newCat;
+  } else {
+    const item=f.categorias[idx].itens[itemIdx];
+    const oldCat=f.categorias[idx];
+    // Remove item from old category
+    oldCat.itens.splice(itemIdx,1);
+    oldCat.total=Math.round(oldCat.itens.reduce((a,x)=>a+x.valor,0)*100)/100;
+    if(oldCat.itens.length===0) f.categorias.splice(idx,1);
+    // Add to new category
+    let nc=f.categorias.find(c=>c.categoria===newCat);
+    if(!nc){nc={categoria:newCat,total:0,itens:[]};f.categorias.push(nc);}
+    nc.itens.push(item);
+    nc.total=Math.round(nc.itens.reduce((a,x)=>a+x.valor,0)*100)/100;
+  }
+  saveState();
+  renderFaturaContent(cartao,mesRef);
 }
 
 // Inicialização
