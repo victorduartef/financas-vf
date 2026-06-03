@@ -472,9 +472,36 @@ function renderAvulsos(){const md=getMonthData();const el=document.getElementByI
 function renderAnalise(){
   const md=getMonthData();const el=document.getElementById('analise-content');
   const catMap={};
-  bills.forEach(b=>{const e=getBillEntry(b.id);const val=e.paid&&e.paidValue!==null?e.paidValue:parseFloat(b.value||0);if(val>0)catMap[b.cat]=(catMap[b.cat]||0)+val;});
+  // IDs dos cartões que têm fatura carregada neste mês
+  const cartoesComFatura=new Set(Object.values(md.faturas||{}).map(f=>f.cartao));
+
+  bills.forEach(b=>{
+    // Se é cartão e já tem fatura detalhada, pula (evita duplicação)
+    if((b.id==='visa'||b.id==='gold')&&cartoesComFatura.has(b.id)) return;
+    const e=getBillEntry(b.id);
+    const val=e.paid&&e.paidValue!==null?e.paidValue:parseFloat(b.value||0);
+    if(val>0)catMap[b.cat]=(catMap[b.cat]||0)+val;
+  });
   (md.avulsos||[]).forEach(x=>{catMap[x.cat]=(catMap[x.cat]||0)+parseFloat(x.value||0);});
-  Object.values(md.faturas||{}).forEach(f=>{(f.categorias||[]).forEach(cat=>{catMap[cat.categoria]=(catMap[cat.categoria]||0)+cat.total;});});
+
+  // Soma categorias da fatura + parcelas categorizadas
+  Object.values(md.faturas||{}).forEach(f=>{
+    // Itens normais por categoria
+    (f.categorias||[]).forEach(cat=>{
+      catMap[cat.categoria]=(catMap[cat.categoria]||0)+cat.total;
+    });
+    // Parcelas por categoria
+    (f.parcelas||[]).forEach(p=>{
+      const cat=p.categoria||'Outros';
+      catMap[cat]=(catMap[cat]||0)+(p.valor||0);
+    });
+    // Total real da fatura vs soma dos itens — diferença vai para "Não identificado"
+    const somaItensNorm=(f.categorias||[]).reduce((s,c)=>s+c.total,0);
+    const somaParc=(f.parcelas||[]).reduce((s,p)=>s+(p.valor||0),0);
+    const somaTotal=Math.round((somaItensNorm+somaParc)*100)/100;
+    const diff=Math.round((f.total-somaTotal)*100)/100;
+    if(diff>0.05) catMap['Não identificado']=(catMap['Não identificado']||0)+diff;
+  });
   const catEntries=Object.entries(catMap).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
   const totalGastos=catEntries.reduce((a,[,v])=>a+v,0);
   const ultimasParcelas=[];Object.values(md.faturas||{}).forEach(f=>{(f.parcelas||[]).filter(p=>p.ultima).forEach(p=>ultimasParcelas.push(p));});
