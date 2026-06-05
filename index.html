@@ -434,6 +434,25 @@ function showSync(msg,isError){
   window._syncTimer=setTimeout(()=>bar.classList.remove('show'),2500);
 }
 
+function sanitizeFaturaKeys(stateObj){
+  // Firebase não aceita '/' em chaves — substitui por '_' em todas as chaves de faturas
+  if(!stateObj || !stateObj.data) return stateObj;
+  const clean = JSON.parse(JSON.stringify(stateObj)); // deep clone
+  Object.keys(clean.data || {}).forEach(monthKey => {
+    const month = clean.data[monthKey];
+    if(!month || !month.faturas) return;
+    const oldKeys = Object.keys(month.faturas);
+    oldKeys.forEach(k => {
+      const cleanKey = k.replace(/\//g, '_');
+      if(cleanKey !== k){
+        month.faturas[cleanKey] = month.faturas[k];
+        delete month.faturas[k];
+      }
+    });
+  });
+  return clean;
+}
+
 function saveState(){
   // Salva local
   localStorage.setItem('vf_state', JSON.stringify(state));
@@ -445,10 +464,11 @@ function saveState(){
     if(!window._fbSet) return;
     const ts = Date.now().toString();
     window._lastLocalSave = ts;
-    const payload = {state, bills, categories, _lastSave: ts};
+    const cleanState = sanitizeFaturaKeys(state);
+    const payload = {state: cleanState, bills, categories, _lastSave: ts};
     window._fbSet('victorduartef/financas', payload)
       .then(() => showSync('✓ Sincronizado'))
-      .catch(() => showSync('Erro ao sincronizar', true));
+      .catch(e => showSync('Erro: ' + e.message, true));
   }, 800);
 }
 
@@ -1069,9 +1089,10 @@ async function handlePdfUpload(file){
     if(window._fbSet){
       const ts = Date.now().toString();
       window._lastLocalSave = ts;
-      window._fbSet('victorduartef/financas', {state, bills, categories, _lastSave: ts})
+      const cleanState = sanitizeFaturaKeys(state);
+      window._fbSet('victorduartef/financas', {state: cleanState, bills, categories, _lastSave: ts})
         .then(() => showSync('✓ Fatura salva'))
-        .catch(() => showSync('Erro ao salvar fatura', true));
+        .catch(e => showSync('Erro: ' + e.message, true));
     }
 
     document.getElementById('loading').classList.remove('open');
