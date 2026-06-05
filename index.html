@@ -470,7 +470,38 @@ function initFirebaseSync(){
       const localState = localStorage.getItem('vf_state');
       const localParsed = localState ? JSON.parse(localState) : null;
 
-      if(data.state) state = data.state;
+      // Merge state: preserva faturas locais que podem ser mais recentes
+      if(data.state){
+        const localStateBefore = JSON.parse(JSON.stringify(state)); // cópia atual
+        state = data.state;
+        // Para cada mês que existe localmente, preserva faturas se forem mais recentes
+        if(localStateBefore.data){
+          Object.keys(localStateBefore.data).forEach(monthKey => {
+            const localMonth = localStateBefore.data[monthKey];
+            if(!localMonth || !localMonth.faturas) return;
+            if(!state.data[monthKey]) state.data[monthKey] = localMonth;
+            else {
+              if(!state.data[monthKey].faturas) state.data[monthKey].faturas = {};
+              // Merge faturas: mantém a mais recente por chave
+              Object.keys(localMonth.faturas).forEach(fatKey => {
+                const localFat = localMonth.faturas[fatKey];
+                const remoteFat = state.data[monthKey].faturas[fatKey];
+                if(!remoteFat){
+                  // Fatura existe só local — mantém
+                  state.data[monthKey].faturas[fatKey] = localFat;
+                } else {
+                  // Ambas existem — mantém a mais recente
+                  const localTs = localFat.uploadedAt || '';
+                  const remoteTs = remoteFat.uploadedAt || '';
+                  if(localTs > remoteTs){
+                    state.data[monthKey].faturas[fatKey] = localFat;
+                  }
+                }
+              });
+            }
+          });
+        }
+      }
       if(data.bills) bills = data.bills;
 
       // Merge de categorias: une Firebase + local, sem perder nenhuma
@@ -1026,10 +1057,22 @@ async function handlePdfUpload(file){
     const parsed = await parseFaturaBradesco(file);
     const md = getMonthData();
     if(!md.faturas) md.faturas = {};
+    // Preserva faturas existentes do mesmo mês — só adiciona/atualiza a fatura atual
     md.faturas[cartao+'_'+mesRef] = {...parsed, cartao, mesRef, uploadedAt: new Date().toISOString()};
     const billEntry = bills.find(b => b.id === cartao);
     if(billEntry && parsed.total) billEntry.value = parsed.total;
-    saveState();
+
+    // Salva imediatamente no Firebase sem debounce para não perder
+    localStorage.setItem('vf_state', JSON.stringify(state));
+    localStorage.setItem('vf_bills', JSON.stringify(bills));
+    if(window._fbSet){
+      const ts = Date.now().toString();
+      window._lastLocalSave = ts;
+      window._fbSet('victorduartef/financas', {state, bills, categories, _lastSave: ts})
+        .then(() => showSync('✓ Fatura salva'))
+        .catch(() => showSync('Erro ao salvar fatura', true));
+    }
+
     document.getElementById('loading').classList.remove('open');
     renderFaturaContent(cartao, mesRef);
     renderBills();
@@ -1040,8 +1083,38 @@ async function handlePdfUpload(file){
     alert('Erro ao processar fatura.\n' + e.message);
   }
 }
-function renderFaturaPills(){const el=document.getElementById('fatura-pills');const md=getMonthData();const keys=Object.keys(md.faturas||{});if(!keys.length){el.innerHTML='';return;}el.innerHTML=keys.map(k=>{const f=md.faturas[k];const label=(f.cartao==='visa'?'Visa Infinite':'Gold')+' '+f.mesRef;return `<div class="tab-pill" onclick="selectFaturaPill(this,'${f.cartao}','${f.mesRef}')">${label}</div>`;}).join('');const first=el.querySelector('.tab-pill');if(first){const f=md.faturas[keys[0]];first.classList.add('active');renderFaturaContent(f.cartao,f.mesRef);}}
-function selectFaturaPill(el,cartao,mesRef){document.querySelectorAll('#fatura-pills .tab-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');renderFaturaContent(cartao,mesRef);}
+function renderFaturaPills(){
+  const el = document.getElementById('fatura-pills');
+  const md = getMonthData();
+  const keys = Object.keys(md.faturas || {});
+  if(!keys.length){ el.innerHTML = ''; document.getElementById('fatura-content').innerHTML = ''; return; }
+
+  // Preserva a fatura ativa atual
+  const activePill = el.querySelector('.tab-pill.active');
+  const activeKey = activePill ? activePill.getAttribute('data-fatkey') : null;
+
+  el.innerHTML = keys.map(k => {
+    const f = md.faturas[k];
+    const label = (f.cartao === 'visa' ? 'Visa Infinite' : 'Gold') + ' ' + f.mesRef;
+    return '<div class="tab-pill" data-fatkey="' + k + '" onclick="selectFaturaPill(this,\'' + f.cartao + '\',\'' + f.mesRef + '\')">' + label + '</div>';
+  }).join('');
+
+  // Reativa a pill que estava selecionada, ou a primeira
+  const toActivate = (activeKey && el.querySelector('[data-fatkey="' + activeKey + '"]'))
+    || el.querySelector('.tab-pill');
+
+  if(toActivate){
+    toActivate.classList.add('active');
+    const fatKey = toActivate.getAttribute('data-fatkey');
+    const f = md.faturas[fatKey];
+    if(f) renderFaturaContent(f.cartao, f.mesRef);
+  }
+}
+function selectFaturaPill(el, cartao, mesRef){
+  document.querySelectorAll('#fatura-pills .tab-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  renderFaturaContent(cartao, mesRef);
+}
 let _curFatCartao=null,_curFatMes=null;
 function renderFaturaContent(cartao,mesRef){
   _curFatCartao=cartao;_curFatMes=mesRef;
