@@ -2,8 +2,18 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>FinançasVF</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#16a34a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FinançasVF">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -1447,5 +1457,10 @@ async function processarFaturaSelecionada(){
 window._onFirebaseReady=function(){initFirebaseSync();};
 if(window._firebaseReady)initFirebaseSync();
 </script>
+  <script>
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    }
+  </script>
 </body>
 </html>
