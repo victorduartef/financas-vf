@@ -778,42 +778,57 @@ async function parseFaturaBradesco(file){
 
   // CRÍTICO: Corta o texto na seção de próximas faturas para não incluir lançamentos futuros
   // Padrões de seção de próximas faturas (Bradesco e Itaú)
-  // Marcadores de FIM real dos lançamentos (aparecem APÓS todos os itens)
-  // NÃO usar 'Mensagem Importante' ou 'Taxas mensais' pois aparecem no meio (fim da pág 2)
-  // mas os lançamentos continuam na página 3!
-  const STOP_MARKERS = [
-    'Total para VICTOR DUARTE FERREIRA',  // Bradesco: linha de total final
-    'Total da fatura em real',            // Bradesco: última linha da fatura
-    'Total desta fatura',                 // Itaú
-    'Total dos lançamentos atuais',       // Itaú
-  ];
-
   let textToProcess = fullText;
-  // Estratégia: encontra a ÚLTIMA ocorrência do total da fatura e corta depois
-  for(const marker of STOP_MARKERS){
+
+  // Detecta banco pelo conteúdo
+  const isBradesco = fullText.includes('Total para VICTOR DUARTE FERREIRA') ||
+                     fullText.includes('Total da fatura em real');
+  const isItau = fullText.includes('Total dos lançamentos atuais') ||
+                 fullText.includes('Lançamentos: compras e saques');
+
+  if(isBradesco){
+    // Bradesco: corta em 'Total para VICTOR DUARTE FERREIRA' — aparece no fim da pág 3
+    const marker = 'Total para VICTOR DUARTE FERREIRA';
     const idx = textToProcess.lastIndexOf(marker);
     if(idx > 0){
-      // Mantém até o final da linha do total
       const endOfLine = textToProcess.indexOf('\n', idx);
-      textToProcess = textToProcess.substring(0, endOfLine > 0 ? endOfLine : idx + marker.length + 20);
-      break;
+      textToProcess = textToProcess.substring(0, endOfLine > 0 ? endOfLine : idx + 60);
     }
-  }
-
-  // Para Itaú: remove seção de próximas faturas que fica no MEIO do texto
-  // Identifica pelo marcador e remove só aquele bloco
-  const proxFatIdx = textToProcess.indexOf('Compras parceladas - próximas faturas');
-  const proxFatIdx2 = textToProcess.indexOf('Compras parceladas- próximas faturas');
-  const proxIdx = proxFatIdx > 0 ? proxFatIdx : proxFatIdx2;
-  if(proxIdx > 0){
-    // Remove da seção de próximas faturas até o próximo marcador de data DD/MM
-    const afterProx = textToProcess.substring(proxIdx);
-    const nextDateMatch = afterProx.match(/\n\s*(\d{2}\/\d{2})\s+[A-Z]/);
-    if(nextDateMatch){
-      const resumeIdx = proxIdx + afterProx.indexOf(nextDateMatch[0]);
-      textToProcess = textToProcess.substring(0, proxIdx) + textToProcess.substring(resumeIdx);
-    } else {
-      textToProcess = textToProcess.substring(0, proxIdx);
+  } else if(isItau){
+    // Itaú: corta em 'Total dos lançamentos atuais' que aparece APÓS os itens
+    const marker = 'Total dos lançamentos atuais';
+    const idx = textToProcess.lastIndexOf(marker);
+    if(idx > 0){
+      const endOfLine = textToProcess.indexOf('\n', idx);
+      textToProcess = textToProcess.substring(0, endOfLine > 0 ? endOfLine : idx + 60);
+    }
+    // Para Itaú: remove seção 'Compras parceladas - próximas faturas' que fica no meio
+    const _p1 = textToProcess.indexOf('Compras parceladas - próximas faturas');
+    const _p2 = textToProcess.indexOf('Compras parceladas- próximas faturas');
+    const proxIdx = _p1 > 0 ? _p1 : _p2 > 0 ? _p2 : -1;
+    if(proxIdx > 0){
+      const afterProx = textToProcess.substring(proxIdx);
+      const nextDateMatch = afterProx.match(/\n\s*@?(\d{2}\/\d{2})\s+[A-Za-z]/);
+      if(nextDateMatch){
+        const resumeIdx = proxIdx + afterProx.indexOf(nextDateMatch[0]);
+        textToProcess = textToProcess.substring(0, proxIdx) + textToProcess.substring(resumeIdx);
+      } else {
+        textToProcess = textToProcess.substring(0, proxIdx);
+      }
+    }
+    // Para Itaú: só processa a partir da seção de lançamentos
+    const lancStart = textToProcess.indexOf('Lançamentos: compras e saques');
+    if(lancStart > 0) textToProcess = textToProcess.substring(lancStart);
+  } else {
+    // Fallback genérico: tenta os marcadores mais comuns
+    const fallbacks = ['Total para VICTOR','Total da fatura em real','Total dos lançamentos'];
+    for(const m of fallbacks){
+      const idx = textToProcess.lastIndexOf(m);
+      if(idx > 0){
+        const eol = textToProcess.indexOf('\n', idx);
+        textToProcess = textToProcess.substring(0, eol > 0 ? eol : idx + 60);
+        break;
+      }
     }
   }
 
