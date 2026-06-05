@@ -1154,16 +1154,40 @@ function renderRelatorio(){
   // Collect all items
   const items = [];
 
+  // Cartões que têm fatura detalhada carregada neste mês
+  const cartoesComFatura = new Set(Object.values(md.faturas||{}).map(f => f.cartao));
+
   // 1. Contas fixas
   bills.filter(b => {
     if(!isBillActive({...b, currentYear: year, currentMonth: monthIdx})) return false;
-    // Check endDate against this specific month
     if(b.endMonth && b.endYear){
       if(year > b.endYear) return false;
       if(year === b.endYear && monthIdx+1 > b.endMonth) return false;
     }
     return true;
   }).forEach(b => {
+    // Se é cartão com fatura detalhada, pula (ou mostra só diferença)
+    if((b.id==='visa'||b.id==='gold') && cartoesComFatura.has(b.id)){
+      const e = (md.bills||[]).find(x=>x.id===b.id) || {paid:false,paidValue:null};
+      const valPago = e.paid && e.paidValue !== null ? e.paidValue : parseFloat(b.value||0);
+      const fatura = Object.values(md.faturas||{}).find(f => f.cartao === b.id);
+      const valFatura = fatura ? fatura.total : 0;
+      const diff = Math.round((valPago - valFatura) * 100) / 100;
+      // Só mostra se pagou mais do que o total da fatura (diferença positiva)
+      if(diff > 0.05){
+        if(catFilter && b.cat !== catFilter) return;
+        items.push({
+          tipo: '🏠 Conta fixa',
+          nome: b.name + ' (diferença s/ fatura)',
+          categoria: b.cat,
+          valor: diff,
+          data: '—',
+          pago: e.paid
+        });
+      }
+      return; // Não adiciona o valor cheio do cartão
+    }
+
     const e = (md.bills||[]).find(x=>x.id===b.id) || {paid:false,paidValue:null};
     const val = e.paid && e.paidValue !== null ? e.paidValue : parseFloat(b.value||0);
     if(val <= 0) return;
