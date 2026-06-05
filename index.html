@@ -204,10 +204,17 @@
         </select>
         <select id="fatura-cartao-sel"><option value="visa">Visa Infinite</option><option value="gold">Cartão Gold</option></select>
       </div>
-      <label for="pdf-upload" class="upload-area" style="display:block;cursor:pointer;">
-        <i class="ti ti-file-upload"></i><p>Enviar fatura PDF</p><p class="hint" id="upload-hint">Toque para selecionar</p>
-      </label>
-      <input type="file" id="pdf-upload" accept=".pdf,application/pdf" style="display:none;">
+      <div class="upload-area" onclick="document.getElementById('pdf-upload').click()" style="cursor:pointer;">
+        <i class="ti ti-file-upload" id="upload-icon"></i>
+        <p>Toque para selecionar a fatura PDF</p>
+        <p class="hint" id="upload-hint">Nenhum arquivo selecionado</p>
+      </div>
+      <input type="file" id="pdf-upload" accept=".pdf,application/pdf" style="position:fixed;left:-9999px;top:-9999px;opacity:0;">
+      <div id="btn-processar-wrap" style="display:none;padding:0 16px 8px;">
+        <button class="btn btn-primary" onclick="processarFaturaSelecionada()" style="display:flex;align-items:center;justify-content:center;gap:8px;">
+          <i class="ti ti-cpu"></i> Processar fatura
+        </button>
+      </div>
       <div id="fatura-content"></div>
     </div>
     <div id="tab-cats" class="tab">
@@ -296,6 +303,33 @@
         <option value="ti-brand-instagram">📸 Assinaturas Digitais</option>
         <option value="ti-cash">💵 Outros Gastos</option>
       </select>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Vigência</label>
+      <select class="form-input" id="bill-vigencia" onchange="toggleBillEndDate()">
+        <option value="indeterminado">Indeterminada (sem fim)</option>
+        <option value="limitado">Limitada (definir até quando)</option>
+      </select>
+    </div>
+    <div id="bill-enddate-wrap" style="display:none">
+      <div class="form-row">
+        <label class="form-label">Pagar até (mês/ano)</label>
+        <div style="display:flex;gap:8px">
+          <select class="form-input" id="bill-end-month" style="flex:1">
+            <option value="1">Janeiro</option><option value="2">Fevereiro</option>
+            <option value="3">Março</option><option value="4">Abril</option>
+            <option value="5">Maio</option><option value="6">Junho</option>
+            <option value="7">Julho</option><option value="8">Agosto</option>
+            <option value="9">Setembro</option><option value="10">Outubro</option>
+            <option value="11">Novembro</option><option value="12">Dezembro</option>
+          </select>
+          <select class="form-input" id="bill-end-year" style="flex:1">
+            <option value="2026">2026</option><option value="2027">2027</option>
+            <option value="2028">2028</option><option value="2029">2029</option>
+            <option value="2030">2030</option>
+          </select>
+        </div>
+      </div>
     </div>
     <div id="modal-bill-del-wrap" style="display:none;margin-top:4px"><button class="btn-danger-sm" style="width:100%" onclick="deleteBill()"><i class="ti ti-trash"></i> Excluir esta conta</button></div>
     <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal('modal-bill')">Cancelar</button><button class="btn btn-primary" onclick="saveBill()">Salvar</button></div>
@@ -434,7 +468,7 @@ function renderSummary(){
   const salario=parseFloat(md.salario)||0;
   const extras=(md.extras||[]).reduce((a,e)=>a+parseFloat(e.value||0),0);
   const receita=salario+extras;
-  const fixos=bills.reduce((a,b)=>{const e=getBillEntry(b.id);return a+(e.paid?(e.paidValue||0):parseFloat(b.value||0));},0);
+  const fixos=bills.filter(isBillActive).reduce((a,b)=>{const e=getBillEntry(b.id);return a+(e.paid?(e.paidValue||0):parseFloat(b.value||0));},0);
   const avulsos=(md.avulsos||[]).reduce((a,x)=>a+parseFloat(x.value||0),0);
   const gastos=fixos+avulsos;const saldo=receita-gastos;const pct=receita>0?Math.round((gastos/receita)*100):0;
   document.getElementById('m-receita').textContent=fmtBRL(receita);
@@ -449,10 +483,20 @@ function renderSummary(){
   const bar=document.getElementById('m-bar');bar.style.width=Math.min(pct,100)+'%';bar.style.background=pct>85?'#dc2626':pct>60?'#d97706':'#16a34a';
 }
 function renderExtras(){const md=getMonthData();const el=document.getElementById('extras-list');const extras=md.extras||[];if(!extras.length){el.innerHTML='';return;}el.innerHTML=extras.map((e,i)=>`<div class="extra-item"><span class="extra-name">${e.desc}</span><span class="extra-value">${fmtBRL(e.value)}</span><button class="extra-del" onclick="removeExtra(${i})"><i class="ti ti-x"></i></button></div>`).join('');}
+function isBillActive(b){
+  if(!b.endMonth||!b.endYear) return true;
+  // Active if current month <= end month
+  const curY=state.currentYear,curM=state.currentMonth+1;
+  if(curY<b.endYear) return true;
+  if(curY===b.endYear&&curM<=b.endMonth) return true;
+  return false;
+}
+
 function renderBills(){
   const el=document.getElementById('bills-list');
-  if(!bills.length){el.innerHTML='<div class="empty"><i class="ti ti-inbox"></i><p>Nenhuma conta</p></div>';return;}
-  el.innerHTML=bills.map(b=>{
+  const activeBills=bills.filter(isBillActive);
+  if(!activeBills.length){el.innerHTML='<div class="empty"><i class="ti ti-inbox"></i><p>Nenhuma conta</p></div>';return;}
+  el.innerHTML=activeBills.map(b=>{
     const e=getBillEntry(b.id);const cat=categories.find(c=>c.name===b.cat)||{color:'#64748b'};
     const displayVal=e.paid&&e.paidValue!==null?e.paidValue:b.value;
     return `<div class="bill-item">
@@ -475,7 +519,7 @@ function renderAnalise(){
   // IDs dos cartões que têm fatura carregada neste mês
   const cartoesComFatura=new Set(Object.values(md.faturas||{}).map(f=>f.cartao));
 
-  bills.forEach(b=>{
+  bills.filter(isBillActive).forEach(b=>{
     // Se é cartão e já tem fatura detalhada, pula (evita duplicação)
     if((b.id==='visa'||b.id==='gold')&&cartoesComFatura.has(b.id)) return;
     const e=getBillEntry(b.id);
@@ -527,26 +571,74 @@ function openAddAvulso(){document.getElementById('avulso-desc').value='';documen
 function saveAvulso(){const desc=document.getElementById('avulso-desc').value.trim();const value=parseFloat(document.getElementById('avulso-val').value)||0;const cat=document.getElementById('avulso-cat-inp').value;if(!desc||!value)return;const md=getMonthData();if(!md.avulsos)md.avulsos=[];md.avulsos.push({desc,value,cat});closeModal('modal-avulso');saveState();renderAvulsos();renderSummary();}
 function removeAvulso(i){const md=getMonthData();md.avulsos.splice(i,1);saveState();renderAvulsos();renderSummary();}
 function populateBillCatSelect(){document.getElementById('bill-cat-inp').innerHTML=categories.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');}
-function openAddBill(){editingBillId=null;document.getElementById('modal-bill-title').textContent='Nova conta fixa';document.getElementById('bill-name-inp').value='';document.getElementById('bill-val-inp').value='';document.getElementById('modal-bill-del-wrap').style.display='none';populateBillCatSelect();document.getElementById('modal-bill').classList.add('open');}
-function openEditBill(id){const b=bills.find(x=>x.id===id);if(!b)return;editingBillId=id;document.getElementById('modal-bill-title').textContent='Editar conta';document.getElementById('bill-name-inp').value=b.name;document.getElementById('bill-val-inp').value=b.value;document.getElementById('modal-bill-del-wrap').style.display='block';populateBillCatSelect();document.getElementById('bill-cat-inp').value=b.cat;document.getElementById('bill-icon-inp').value=b.icon;document.getElementById('modal-bill').classList.add('open');}
-function saveBill(){const name=document.getElementById('bill-name-inp').value.trim();const value=parseFloat(document.getElementById('bill-val-inp').value)||0;const cat=document.getElementById('bill-cat-inp').value;const icon=document.getElementById('bill-icon-inp').value;if(!name)return;if(editingBillId){const b=bills.find(x=>x.id===editingBillId);if(b){b.name=name;b.value=value;b.cat=cat;b.icon=icon;}}else{bills.push({id:'bill_'+Date.now(),name,value,cat,icon});}closeModal('modal-bill');saveState();renderBills();renderSummary();}
+function toggleBillEndDate(){
+  const v=document.getElementById('bill-vigencia').value;
+  document.getElementById('bill-enddate-wrap').style.display=v==='limitado'?'block':'none';
+}
+
+function openAddBill(){
+  editingBillId=null;
+  document.getElementById('modal-bill-title').textContent='Nova conta fixa';
+  document.getElementById('bill-name-inp').value='';
+  document.getElementById('bill-val-inp').value='';
+  document.getElementById('bill-vigencia').value='indeterminado';
+  document.getElementById('bill-enddate-wrap').style.display='none';
+  document.getElementById('modal-bill-del-wrap').style.display='none';
+  populateBillCatSelect();
+  document.getElementById('modal-bill').classList.add('open');
+}
+function openEditBill(id){
+  const b=bills.find(x=>x.id===id);if(!b)return;
+  editingBillId=id;
+  document.getElementById('modal-bill-title').textContent='Editar conta';
+  document.getElementById('bill-name-inp').value=b.name;
+  document.getElementById('bill-val-inp').value=b.value;
+  document.getElementById('modal-bill-del-wrap').style.display='block';
+  populateBillCatSelect();
+  document.getElementById('bill-cat-inp').value=b.cat;
+  document.getElementById('bill-icon-inp').value=b.icon;
+  const hasEnd=b.endMonth&&b.endYear;
+  document.getElementById('bill-vigencia').value=hasEnd?'limitado':'indeterminado';
+  document.getElementById('bill-enddate-wrap').style.display=hasEnd?'block':'none';
+  if(hasEnd){
+    document.getElementById('bill-end-month').value=b.endMonth;
+    document.getElementById('bill-end-year').value=b.endYear;
+  }
+  document.getElementById('modal-bill').classList.add('open');
+}
+function saveBill(){
+  const name=document.getElementById('bill-name-inp').value.trim();
+  const value=parseFloat(document.getElementById('bill-val-inp').value)||0;
+  const cat=document.getElementById('bill-cat-inp').value;
+  const icon=document.getElementById('bill-icon-inp').value;
+  const vigencia=document.getElementById('bill-vigencia').value;
+  const endMonth=vigencia==='limitado'?parseInt(document.getElementById('bill-end-month').value):null;
+  const endYear=vigencia==='limitado'?parseInt(document.getElementById('bill-end-year').value):null;
+  if(!name)return;
+  if(editingBillId){
+    const b=bills.find(x=>x.id===editingBillId);
+    if(b){b.name=name;b.value=value;b.cat=cat;b.icon=icon;b.endMonth=endMonth;b.endYear=endYear;}
+  } else {
+    bills.push({id:'bill_'+Date.now(),name,value,cat,icon,endMonth,endYear});
+  }
+  closeModal('modal-bill');saveState();renderBills();renderSummary();
+}
 function deleteBill(){if(!editingBillId)return;bills=bills.filter(b=>b.id!==editingBillId);closeModal('modal-bill');saveState();renderBills();renderSummary();}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(m=>{m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});});
 
 // Categorização por palavras-chave
-// Categorização por palavras-chave (usada para parcelas e itens normais)
 const KEYWORD_CATS = {
-  'Transporte':['uber','99','taxi','posto','combustivel','estacionamento','pedagio','ifood*moto','loggi'],
-  'Alimentação':['restaurante','lanche','pizza','burger','sushi','padaria','pao de','supermercado','mercado','wellness','hortifruti','ifood','rappi','delivery','varanda','spicy','queijaria','panini','bh shopping','bhshopping','shopping','folhas'],
-  'Saúde':['farmacia','drogaria','medico','clinica','hospital','laboratorio','radiologia','odonto','sorrisoodonto','plano','seguro','azos','tokio','lima radio','atletico','academia','ginastica','personal','pilates'],
+  'Transporte':['uber','99*','99 ','taxi','posto','combustivel','estacionamento','pedagio','loggi','ifd*moto','catalao'],
+  'Alimentação':['restaurante','lanche','pizza','burger','sushi','padaria','pao de','supermercado','mercado','wellness','hortifruti','ifood','ifd*','rappi','delivery','varanda','spicy','queijaria','panini','bh shopping','bhshopping','shopping','folhas','nestle'],
+  'Saúde':['farmacia','drogaria','medico','clinica','hospital','laboratorio','radiologia','odonto','sorrisoodonto','plano','seguro','azos','tokio','lima radio','academia','ginastica','personal','pilates'],
   'Assinaturas':['netflix','spotify','amazon prime','youtube','google','apple','microsoft','claude','chatgp','subscription','bill','lifebox','adaptaorg'],
-  'Educação':['pucrs','faculdade','curso','escola','leroy','livro','livraria','leitura','revistaria','magazine','fnac','cultura'],
-  'Compras':['mercadolivre','mercado livre','shopee','americanas','magazine','casas bahia','marisa','renner','cea','zara','amazon','greycom','boxdaleitura','sitelojas','b-house'],
-  'Pet':['cobasi','petshop','pet','veterinario','petz'],
-  'Lazer':['cinema','teatro','show','ingresso','vasco','atletico','cruzeiro','america','flamengo','corinthians','palmeiras','sport','clube','vascogi'],
+  'Educação':['pucrs','faculdade','curso','escola','livro','livraria','leitura','revistaria','magazine','fnac','cultura'],
+  'Compras':['mercadolivre','mercado livre','shopee','americanas','casas bahia','marisa','renner','cea','zara','amazon','greycom','boxdaleitura','sitelojas','b-house','araujo'],
+  'Pet':['cobasi','petshop','pet ','veterinario','petz'],
+  'Lazer':['cinema','teatro','show','ingresso','vasco','atletico','cruzeiro','america','flamengo','corinthians','palmeiras','sport','clube','vascogi','leroy'],
   'Telefonia':['tim','vivo','claro','oi','nextel','telecom'],
-  'Serviços':['jim.com','asaas','lantana','pagamento','mercado pago','sorrisoodonto','mp *']
+  'Serviços':['jim.com','asaas','lantana','mercado pago','mp *','sorrisoodonto']
 };
 
 function categorizarItem(nome){
@@ -561,106 +653,133 @@ async function parseFaturaBradesco(file){
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
 
-  // Extrai itens com posição X,Y para reconstruir linhas corretamente
-  let allItems = [];
+  // Extrai texto completo de todas as páginas
+  let fullText = '';
   for(let p = 1; p <= pdf.numPages; p++){
     const page = await pdf.getPage(p);
     const tc = await page.getTextContent();
-    const vp = page.getViewport({scale:1});
-    tc.items.forEach(item => {
-      allItems.push({
-        str: item.str.trim(),
-        x: Math.round(item.transform[4]),
-        y: Math.round(vp.height - item.transform[5]),
-        page: p
-      });
-    });
-  }
-
-  // Agrupa por linha (mesmo Y ± 4px, mesma página)
-  allItems.sort((a,b) => a.page - b.page || a.y - b.y || a.x - b.x);
-  const lines = [];
-  let curLine = null;
-  for(const item of allItems){
-    if(!item.str) continue;
-    if(!curLine || item.page !== curLine.page || Math.abs(item.y - curLine.y) > 5){
-      curLine = {page: item.page, y: item.y, parts: [item.str]};
-      lines.push(curLine);
-    } else {
-      curLine.parts.push(item.str);
+    // Junta tokens com espaço, preservando quebras de linha por Y
+    let lastY = null;
+    for(const item of tc.items){
+      const y = Math.round(item.transform[5]);
+      if(lastY !== null && Math.abs(y - lastY) > 3) fullText += '\n';
+      fullText += item.str + ' ';
+      lastY = y;
     }
+    fullText += '\n---PAGE---\n';
   }
 
+  // Pega total da fatura direto do texto
+  const mTotal = fullText.match(/Total da fatura em real\s+([\d\.]+,[\d]{2})/);
+  const totalFatura = mTotal ? parseFloat(mTotal[1].replace(/\./g,'').replace(',','.')) : 0;
+
+  // Estratégia: encontrar a seção de lançamentos pelo marcador
+  // e extrair cada lançamento com regex
   const lancamentos = [];
-  // Padrão: linha começa com DD/MM
-  const reData = /^(\d{2}\/\d{2})$/;
-  const reValor = /^(\d{1,3}(?:\.\d{3})*,\d{2})$/;
-  const reParcela = /(\d{2})\/( \d{2}|\d{2})$/; // XX/XX no final do nome
 
-  for(let i = 0; i < lines.length; i++){
-    const parts = lines[i].parts;
-    if(parts.length === 0) continue;
-    const first = parts[0];
-    if(!reData.test(first)) continue;
+  // Regex: linha começa com DD/MM seguido de texto e termina com número
+  // Abordagem: extrair todas as linhas, depois associar datas com valores
+  const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    const data = first;
-    // Junta todas as partes da linha exceto data e possível valor final
-    let nameParts = [];
-    let valor = null;
+  // Lista de cidades para ignorar
+  const CIDADES = new Set(['SAO PAULO','BELO HORIZONT','BELO HORIZONTE','RIO DE JANEIR',
+    'CAMPINAS','OSASCO','RECIFE','CAJAMAR','SAO LOURENCO','NOVA LIMA','Sao Paulo',
+    'Belo Horizont','Belo Horizonte','Nova Lima','Rio de Janeir','SAO PAULO ','ANTHROPIC.C',
+    'OM','Osasco','RECIFE ','SAO LOURENCO ']);
 
-    for(let j = 1; j < parts.length; j++){
-      const p = parts[j];
-      if(reValor.test(p.replace('-',''))){
-        valor = parseFloat(p.replace(/\./g,'').replace(',','.'));
-      } else if(['SAO PAULO','BELO HORIZONT','BELO HORIZONTE','RIO DE JANEIR','CAMPINAS','OSASCO','RECIFE','CAJAMAR','Sao Paulo','Belo Horizont','Nova Lima','NOVA LIMA','SAO LOURENCO','ANTHROPIC.C','OM','Osasco'].includes(p)){
-        // cidade, ignora
-      } else {
-        nameParts.push(p);
-      }
-    }
+  // Palavras a ignorar completamente
+  const IGNORE_NAMES = ['PAG BOLETO BANCARIO','IOF S/ TRANS INTER REAIS','SALDO ANTERIOR',
+    'Total para VICTOR','Total da fatura','Lançamentos','Data Histórico','Página'];
 
-    // Se valor não encontrado na mesma linha, tenta próxima linha com só número
-    if(valor === null && i+1 < lines.length){
-      const nextParts = lines[i+1].parts;
-      const maybeVal = nextParts.join(' ').trim();
-      if(reValor.test(maybeVal)){
-        valor = parseFloat(maybeVal.replace(/\./g,'').replace(',','.'));
-        i++; // pula linha de valor
-      }
-    }
+  const reData = /^(\d{2}\/\d{2})\s+(.+)/;
+  const reValorFim = /([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})\s*(-?)\s*$/;
+  const reApenasValor = /^([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})\s*(-?)\s*$/;
+  const reParcela = /(\d{2})\/(\d{2})(?:\s|$)/;
 
-    if(valor === null || valor <= 0) continue;
+  let i = 0;
+  while(i < lines.length){
+    const line = lines[i];
+    const mDate = line.match(reData);
+    if(!mDate){ i++; continue; }
 
-    let nome = nameParts.join(' ').trim();
-    if(!nome) continue;
+    const data = mDate[1];
+    let resto = mDate[2].trim();
 
     // Ignora linhas de controle
-    const nomeUpper = nome.toUpperCase();
-    if(['PAG BOLETO BANCARIO','IOF S/ TRANS INTER REAIS','SALDO ANTERIOR','PAGAMENTO'].some(x => nomeUpper.includes(x))) continue;
-    if(nomeUpper === 'PAGAMENTO') continue;
+    if(IGNORE_NAMES.some(ig => resto.toUpperCase().includes(ig.toUpperCase()))){ i++; continue; }
 
-    // Detecta parcela: padrão XX/XX no nome
-    const mParcela = nome.match(/(\d{2})\/(\d{2})(?:\s|$)/);
-    let parcela_atual = null, total_parcelas = null;
-    let nomeClean = nome;
+    // Tenta extrair valor da mesma linha
+    let valor = null;
+    let nomeBruto = resto;
+
+    const mValLinha = resto.match(reValorFim);
+    if(mValLinha && mValLinha[2] !== '-'){
+      valor = parseFloat(mValLinha[1].replace(/\./g,'').replace(',','.'));
+      nomeBruto = resto.replace(reValorFim,'').trim();
+    }
+
+    // Se não achou valor, olha próximas linhas (até 4) buscando valor sozinho
+    let j = i + 1;
+    while(valor === null && j < Math.min(i+5, lines.length)){
+      const nextLine = lines[j].trim();
+      // Pula cidades
+      if(CIDADES.has(nextLine) || CIDADES.has(nextLine.replace(' ',''))){ j++; continue; }
+      // Verifica se é só um valor
+      const mValSo = nextLine.match(reApenasValor);
+      if(mValSo && mValSo[2] !== '-'){
+        valor = parseFloat(mValSo[1].replace(/\./g,'').replace(',','.'));
+        // Absorve linhas intermediárias que eram cidade/continuação do nome
+        for(let k = i+1; k < j; k++){
+          const mid = lines[k].trim();
+          if(!CIDADES.has(mid) && mid.length > 0 && !mid.match(reApenasValor)){
+            nomeBruto += ' ' + mid;
+          }
+        }
+        i = j; // avança até a linha do valor
+        break;
+      }
+      // Se a próxima linha tem data, para
+      if(lines[j].match(/^\d{2}\/\d{2}\s/)) break;
+      j++;
+    }
+
+    if(valor === null || valor <= 0){ i++; continue; }
+
+    // Limpa nome: remove cidades, valores duplos, cotação USD
+    nomeBruto = nomeBruto
+      .replace(/\d{1,3}(?:\.\d{3})*,\d{2}/g, '') // remove valores no meio
+      .replace(/HORIZONT(E)?/gi,'').replace(/BELO\s*/gi,'')
+      .replace(/SAO PAULO/gi,'').replace(/RIO DE JANEIR/gi,'')
+      .replace(/CAMPINAS/gi,'').replace(/OSASCO/gi,'').replace(/RECIFE/gi,'')
+      .replace(/CAJAMAR/gi,'').replace(/SAO LOURENCO/gi,'').replace(/NOVA LIMA/gi,'')
+      .replace(/ANTHROPIC\.C/gi,'').replace(/\bOM\b/gi,'')
+      .replace(/Sao Paulo/gi,'').replace(/Belo Horizont(e)?/gi,'').replace(/Nova Lima/gi,'')
+      .replace(/Osasco/gi,'').replace(/\s{2,}/g,' ').trim();
+
+    if(!nomeBruto || IGNORE_NAMES.some(ig => nomeBruto.toUpperCase().includes(ig.toUpperCase()))){
+      i++; continue;
+    }
+    if(nomeBruto.toUpperCase() === 'PAGAMENTO'){ i++; continue; }
+
+    // Detecta parcela
+    const mParcela = nomeBruto.match(/(\d{2})\/(\d{2})(?:\s|$)/);
+    let parcela_atual = null, total_parcelas = null, nomeClean = nomeBruto;
     if(mParcela){
       parcela_atual = parseInt(mParcela[1]);
       total_parcelas = parseInt(mParcela[2]);
-      nomeClean = nome.replace(mParcela[0], '').trim();
+      nomeClean = nomeBruto.replace(mParcela[0],'').trim();
     }
 
     lancamentos.push({ data, nome: nomeClean, valor, parcela_atual, total_parcelas });
+    i++;
   }
 
-  // Separa parcelas e itens normais
+  // Separa parcelas e normais
   const parcelas = lancamentos
     .filter(l => l.parcela_atual !== null)
     .map(l => ({
-      nome: l.nome,
-      parcela_atual: l.parcela_atual,
-      total_parcelas: l.total_parcelas,
-      valor: l.valor,
-      data: l.data,
+      nome: l.nome, parcela_atual: l.parcela_atual, total_parcelas: l.total_parcelas,
+      valor: l.valor, data: l.data,
       ultima: l.parcela_atual === l.total_parcelas,
       categoria: categorizarItem(l.nome)
     }));
@@ -678,18 +797,18 @@ async function parseFaturaBradesco(file){
   const categorias = Object.values(catMap).sort((a,b) => b.total - a.total);
   categorias.forEach(c => { c.total = Math.round(c.total * 100) / 100; });
 
-  const total = lancamentos.reduce((s, l) => s + l.valor, 0);
+  // Usa total real da fatura se disponível, senão soma tudo
+  const somaLanc = lancamentos.reduce((s,l) => s + l.valor, 0);
+  const total = totalFatura > 0 ? totalFatura : Math.round(somaLanc * 100) / 100;
 
-  return { total: Math.round(total * 100) / 100, parcelas, categorias };
+  return { total, parcelas, categorias, somaLanc: Math.round(somaLanc*100)/100 };
 }
 
-async function handlePdfUpload(event){
-  const file = event.target.files[0];
-  if(!file){ console.log('No file selected'); return; }
-  document.getElementById('upload-hint').textContent = '📄 ' + file.name;
+async function handlePdfUpload(file){
+  if(!file){ alert('Nenhum arquivo selecionado.'); return; }
   const mesRef = document.getElementById('fatura-mes-ref').value;
   const cartao = document.getElementById('fatura-cartao-sel').value;
-  if(!mesRef){ alert('Selecione o mês de pagamento antes de enviar a fatura.'); return; }
+  if(!mesRef){ alert('Selecione o mês de pagamento antes de processar.'); return; }
   document.getElementById('loading-text').textContent = 'Lendo PDF...';
   document.getElementById('loading').classList.add('open');
   try{
@@ -709,7 +828,6 @@ async function handlePdfUpload(event){
     document.getElementById('loading').classList.remove('open');
     alert('Erro ao processar fatura.\n' + e.message);
   }
-  event.target.value = '';
 }
 function renderFaturaPills(){const el=document.getElementById('fatura-pills');const md=getMonthData();const keys=Object.keys(md.faturas||{});if(!keys.length){el.innerHTML='';return;}el.innerHTML=keys.map(k=>{const f=md.faturas[k];const label=(f.cartao==='visa'?'Visa Infinite':'Gold')+' '+f.mesRef;return `<div class="tab-pill" onclick="selectFaturaPill(this,'${f.cartao}','${f.mesRef}')">${label}</div>`;}).join('');const first=el.querySelector('.tab-pill');if(first){const f=md.faturas[keys[0]];first.classList.add('active');renderFaturaContent(f.cartao,f.mesRef);}}
 function selectFaturaPill(el,cartao,mesRef){document.querySelectorAll('#fatura-pills .tab-pill').forEach(p=>p.classList.remove('active'));el.classList.add('active');renderFaturaContent(cartao,mesRef);}
@@ -800,12 +918,30 @@ function updateItemCat(type,idx,newCat,cartao,mesRef,itemIdx){
 // Inicialização
 loadState();ensureMonthData();render();
 
-// File input listener robusto para mobile
+// File input listener — só mostra botão de processar, não processa automaticamente
+let _selectedFile = null;
 document.getElementById('pdf-upload').addEventListener('change', function(e){
-  if(e.target.files && e.target.files.length > 0){
-    handlePdfUpload(e);
+  const file = e.target.files && e.target.files[0];
+  if(file){
+    _selectedFile = file;
+    document.getElementById('upload-hint').textContent = '📄 ' + file.name;
+    document.getElementById('upload-icon').className = 'ti ti-file-check';
+    document.getElementById('btn-processar-wrap').style.display = 'block';
   }
 });
+
+async function processarFaturaSelecionada(){
+  if(!_selectedFile){ alert('Selecione um arquivo primeiro.'); return; }
+  const mesRef = document.getElementById('fatura-mes-ref').value;
+  const cartao = document.getElementById('fatura-cartao-sel').value;
+  if(!mesRef){ alert('Selecione o mês de pagamento antes de processar.'); return; }
+  document.getElementById('btn-processar-wrap').style.display = 'none';
+  await handlePdfUpload(_selectedFile);
+  _selectedFile = null;
+  document.getElementById('upload-hint').textContent = 'Nenhum arquivo selecionado';
+  document.getElementById('upload-icon').className = 'ti ti-file-upload';
+  document.getElementById('pdf-upload').value = '';
+}
 window._onFirebaseReady=function(){initFirebaseSync();};
 if(window._firebaseReady)initFirebaseSync();
 </script>
