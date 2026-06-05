@@ -1058,7 +1058,8 @@ async function handlePdfUpload(file){
     const md = getMonthData();
     if(!md.faturas) md.faturas = {};
     // Preserva faturas existentes do mesmo mês — só adiciona/atualiza a fatura atual
-    md.faturas[cartao+'_'+mesRef] = {...parsed, cartao, mesRef, uploadedAt: new Date().toISOString()};
+    const fatKey = cartao+'_'+mesRef.replace('/','_');
+    md.faturas[fatKey] = {...parsed, cartao, mesRef, uploadedAt: new Date().toISOString()};
     const billEntry = bills.find(b => b.id === cartao);
     if(billEntry && parsed.total) billEntry.value = parsed.total;
 
@@ -1118,7 +1119,7 @@ function selectFaturaPill(el, cartao, mesRef){
 let _curFatCartao=null,_curFatMes=null;
 function renderFaturaContent(cartao,mesRef){
   _curFatCartao=cartao;_curFatMes=mesRef;
-  const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef];const el=document.getElementById('fatura-content');if(!f){el.innerHTML='';return;}
+  const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef.replace('/','_')]||md.faturas[cartao+'_'+mesRef.replace('/','_')]||md.faturas[cartao+'_'+mesRef];const el=document.getElementById('fatura-content');if(!f){el.innerHTML='';return;}
   const ultimas=(f.parcelas||[]).filter(p=>p.ultima);const totalAlivio=ultimas.reduce((a,p)=>a+(p.valor||0),0);
   const catOptions=categories.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
   let html=`<div class="fatura-top-info"><div><div class="fatura-total-label">Total da fatura</div><div class="fatura-total-val">${fmtBRL(f.total)}</div></div>${totalAlivio>0?`<div style="text-align:right"><div class="fatura-total-label">Alívio próximo mês</div><div class="fatura-alerta-val">-${fmtBRL(totalAlivio)}</div></div>`:''}</div>`;
@@ -1179,7 +1180,7 @@ function renderFaturaContent(cartao,mesRef){
 }
 
 function updateItemCat(type,idx,newCat,cartao,mesRef,itemIdx){
-  const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef];if(!f)return;
+  const md=getMonthData();const f=md.faturas[cartao+'_'+mesRef.replace('/','_')]||md.faturas[cartao+'_'+mesRef];if(!f)return;
   if(type==='parcela'){
     f.parcelas[idx].categoria=newCat;
   } else {
