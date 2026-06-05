@@ -778,32 +778,42 @@ async function parseFaturaBradesco(file){
 
   // CRÍTICO: Corta o texto na seção de próximas faturas para não incluir lançamentos futuros
   // Padrões de seção de próximas faturas (Bradesco e Itaú)
+  // Marcadores de FIM real dos lançamentos (aparecem APÓS todos os itens)
+  // NÃO usar 'Mensagem Importante' ou 'Taxas mensais' pois aparecem no meio (fim da pág 2)
+  // mas os lançamentos continuam na página 3!
   const STOP_MARKERS = [
-    'Compras parceladas - próximas faturas',
-    'Compras parceladas- próximas faturas',
-    'Total parcelados para próximas faturas',
-    'Próxima fatura',
-    'Demais faturas',
-    'Total para próximas faturas',
-    'Compras Parceladas\ncom Juros',
-    'PROGRAMA DE FIDELIDADE',
-    'Taxas mensais',
-    'Mensagem Importante',
-    'Central de atendimento',
-    'Encargos cobrados nesta fatura',
-    'Lançamentos: produtos e serviços',
+    'Total para VICTOR DUARTE FERREIRA',  // Bradesco: linha de total final
+    'Total da fatura em real',            // Bradesco: última linha da fatura
+    'Total desta fatura',                 // Itaú
+    'Total dos lançamentos atuais',       // Itaú
   ];
 
   let textToProcess = fullText;
+  // Estratégia: encontra a ÚLTIMA ocorrência do total da fatura e corta depois
   for(const marker of STOP_MARKERS){
-    const idx = textToProcess.indexOf(marker);
-    if(idx > 0 && idx < textToProcess.length * 0.8){
-      // Só corta se o marcador aparecer depois de 20% do texto (não no início)
-      const candidate = textToProcess.substring(0, idx);
-      if(candidate.length > 200) {
-        textToProcess = candidate;
-        break;
-      }
+    const idx = textToProcess.lastIndexOf(marker);
+    if(idx > 0){
+      // Mantém até o final da linha do total
+      const endOfLine = textToProcess.indexOf('\n', idx);
+      textToProcess = textToProcess.substring(0, endOfLine > 0 ? endOfLine : idx + marker.length + 20);
+      break;
+    }
+  }
+
+  // Para Itaú: remove seção de próximas faturas que fica no MEIO do texto
+  // Identifica pelo marcador e remove só aquele bloco
+  const proxFatIdx = textToProcess.indexOf('Compras parceladas - próximas faturas');
+  const proxFatIdx2 = textToProcess.indexOf('Compras parceladas- próximas faturas');
+  const proxIdx = proxFatIdx > 0 ? proxFatIdx : proxFatIdx2;
+  if(proxIdx > 0){
+    // Remove da seção de próximas faturas até o próximo marcador de data DD/MM
+    const afterProx = textToProcess.substring(proxIdx);
+    const nextDateMatch = afterProx.match(/\n\s*(\d{2}\/\d{2})\s+[A-Z]/);
+    if(nextDateMatch){
+      const resumeIdx = proxIdx + afterProx.indexOf(nextDateMatch[0]);
+      textToProcess = textToProcess.substring(0, proxIdx) + textToProcess.substring(resumeIdx);
+    } else {
+      textToProcess = textToProcess.substring(0, proxIdx);
     }
   }
 
@@ -840,6 +850,9 @@ async function parseFaturaBradesco(file){
     'Juros do rotativo','Juros de mora','Pagamento mínimo','Parcelas fixas',
     'Resumo da fatura','Saldo financiado','Lançamentos atuais','Total desta'
   ];
+  // PAGAMENTO sozinho pode ser lançamento legítimo no Bradesco (cobranças parceladas)
+  // Só ignoramos se for PAG BOLETO (já na lista acima) ou sem valor associado
+  const IGNORE_EXACT_PAGAMENTO_ONLY_IF_NO_PARCELA = true;
 
   const reData = /^(\d{2}\/\d{2})\s+(.+)/;
   const reValorFim = /([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})\s*(-?)\s*$/;
@@ -862,7 +875,31 @@ async function parseFaturaBradesco(file){
 
     // Ignora linhas de controle
     if(IGNORE_NAMES.some(ig => resto.toUpperCase().startsWith(ig.toUpperCase()))){ i++; continue; }
-    if(resto.toUpperCase() === 'PAGAMENTO'){ i++; continue; }
+    // Para "PAGAMENTO" puro: verifica se próxima linha tem parcela (DD/MM) ou valor
+    // Se tiver parcela -> é cobrança legítima (ex: PAGAMENTO 02/02)
+    // Se tiver só valor -> também pode ser cobrança legítima
+    // Se for seguido só de cidade -> é crédito/pagamento do titular, ignora
+    if(resto.toUpperCase() === 'PAGAMENTO'){
+      // Olha próxima linha não-cidade
+      let nextNonCity = '';
+      for(let ni = i+1; ni < Math.min(i+4, lines.length); ni++){
+        const nl = lines[ni].trim().replace(/^@/,'');
+        if(!CIDADES.has(nl) && nl.length > 0){
+          nextNonCity = nl;
+          break;
+        }
+      }
+      // Se próxima linha é parcela DD/MM ou tem data DD/MM = novo lançamento -> ignora este
+      if(!nextNonCity || nextNonCity.match(/^\d{2}\/\d{2}\s/) || nextNonCity.match(/^[A-Z]/)){
+        // Verifica se nextNonCity é parcela tipo "02/02"
+        if(nextNonCity.match(/^\d{2}\/\d{2}$/)){
+          // É parcela! não ignora, deixa o parser pegar normalmente
+        } else {
+          i++; continue; // Crédito/pagamento do titular, ignora
+        }
+      }
+      // Se chegou aqui é porque próxima linha tem valor -> deixa processar
+    }
 
     // Tenta extrair valor da mesma linha
     let valor = null;
