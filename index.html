@@ -436,18 +436,20 @@ function showSync(msg,isError){
 
 function saveState(){
   // Salva local
-  localStorage.setItem('vf_state',JSON.stringify(state));
-  localStorage.setItem('vf_bills',JSON.stringify(bills));
-  localStorage.setItem('vf_cats',JSON.stringify(categories));
+  localStorage.setItem('vf_state', JSON.stringify(state));
+  localStorage.setItem('vf_bills', JSON.stringify(bills));
+  localStorage.setItem('vf_cats', JSON.stringify(categories));
   // Salva no Firebase com debounce
   clearTimeout(fbSaveTimer);
-  fbSaveTimer=setTimeout(()=>{
-    if(!window._fbSet){return;}
-    const payload={state,bills,categories};
-    window._fbSet('victorduartef/financas',payload)
-      .then(()=>showSync('✓ Sincronizado'))
-      .catch(()=>showSync('Erro ao sincronizar',true));
-  },800);
+  fbSaveTimer = setTimeout(() => {
+    if(!window._fbSet) return;
+    const ts = Date.now().toString();
+    window._lastLocalSave = ts;
+    const payload = {state, bills, categories, _lastSave: ts};
+    window._fbSet('victorduartef/financas', payload)
+      .then(() => showSync('✓ Sincronizado'))
+      .catch(() => showSync('Erro ao sincronizar', true));
+  }, 800);
 }
 
 function loadState(){
@@ -457,13 +459,80 @@ function loadState(){
 }
 
 function initFirebaseSync(){
-  if(!window._fbListen)return;
-  window._fbListen('victorduartef/financas',(data)=>{
-    if(!data)return;
-    if(data.state){state=data.state;localStorage.setItem('vf_state',JSON.stringify(state));}
-    if(data.bills){bills=data.bills;localStorage.setItem('vf_bills',JSON.stringify(bills));}
-    if(data.categories){categories=data.categories;localStorage.setItem('vf_cats',JSON.stringify(categories));}
-    ensureMonthData();render();
+  if(!window._fbListen) return;
+  let firstLoad = true;
+  window._fbListen('victorduartef/financas', (data) => {
+    if(!data) return;
+
+    if(firstLoad){
+      // Primeiro carregamento: Firebase é a fonte da verdade
+      // mas preserva edições de categoria das faturas do localStorage
+      const localState = localStorage.getItem('vf_state');
+      const localParsed = localState ? JSON.parse(localState) : null;
+
+      if(data.state) state = data.state;
+      if(data.bills) bills = data.bills;
+
+      // Merge de categorias: une Firebase + local, sem perder nenhuma
+      if(data.categories){
+        const remoteCats = data.categories || [];
+        const localCatsRaw = localStorage.getItem('vf_cats');
+        const localCats = localCatsRaw ? JSON.parse(localCatsRaw) : [];
+        // Junta as duas listas, sem duplicar por nome
+        const merged = [...remoteCats];
+        localCats.forEach(lc => {
+          if(!merged.find(rc => rc.name === lc.name)) merged.push(lc);
+        });
+        categories = merged;
+      }
+
+      // Merge: preserva categorias editadas nas faturas que existem localmente
+      if(localParsed && localParsed.data && state.data){
+        Object.keys(localParsed.data).forEach(monthKey => {
+          const localMonth = localParsed.data[monthKey];
+          const remoteMonth = state.data[monthKey];
+          if(!localMonth || !remoteMonth) return;
+          if(!localMonth.faturas || !remoteMonth.faturas) return;
+
+          Object.keys(localMonth.faturas).forEach(fatKey => {
+            const localFat = localMonth.faturas[fatKey];
+            const remoteFat = remoteMonth.faturas[fatKey];
+            if(!localFat || !remoteFat) return;
+
+            // Se a fatura local tem categorias editadas mais recentes, preserva
+            const localUpload = localFat.uploadedAt || '';
+            const remoteUpload = remoteFat.uploadedAt || '';
+
+            if(localUpload === remoteUpload){
+              // Mesma fatura — preserva edições de categoria do local
+              if(localFat.categorias) remoteFat.categorias = localFat.categorias;
+              if(localFat.parcelas) remoteFat.parcelas = localFat.parcelas;
+            }
+          });
+        });
+      }
+
+      localStorage.setItem('vf_state', JSON.stringify(state));
+      localStorage.setItem('vf_bills', JSON.stringify(bills));
+      localStorage.setItem('vf_cats', JSON.stringify(categories));
+      firstLoad = false;
+      ensureMonthData();
+      render();
+    } else {
+      // Atualizações subsequentes: só aplica se veio de outro dispositivo
+      // (compara timestamp para evitar loop de próprias escritas)
+      if(data._lastSave && data._lastSave === window._lastLocalSave) return;
+
+      if(data.state) state = data.state;
+      if(data.bills) bills = data.bills;
+      if(data.categories) categories = data.categories;
+
+      localStorage.setItem('vf_state', JSON.stringify(state));
+      localStorage.setItem('vf_bills', JSON.stringify(bills));
+      localStorage.setItem('vf_cats', JSON.stringify(categories));
+      ensureMonthData();
+      render();
+    }
   });
 }
 
